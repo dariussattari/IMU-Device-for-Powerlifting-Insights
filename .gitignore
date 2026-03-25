@@ -1,0 +1,42 @@
+# === Data (large / subject-specific — do not commit) ===
+data/raw/
+data/processed/
+data/opencap/
+data/external/
+!data/**/.gitkeep
+
+# === Model artifacts ===
+models/trained/
+!models/trained/.gitkeep
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === Arduino / PlatformIO ===
+firmware/.pio/
+firmware/.vscode/
+
+# === OS junk ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# === Secrets / credentials ===
+.env
+*.pem
