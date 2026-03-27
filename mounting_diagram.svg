@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 580" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.12"/>
+    </filter>
+    <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#D5D5D5"/>
+      <stop offset="40%" stop-color="#B0B0B0"/>
+      <stop offset="100%" stop-color="#888"/>
+    </linearGradient>
+    <linearGradient id="sleeveGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E0E0E0"/>
+      <stop offset="50%" stop-color="#C8C8C8"/>
+      <stop offset="100%" stop-color="#A0A0A0"/>
+    </linearGradient>
+    <pattern id="knurl" x="0" y="0" width="4" height="4" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="4" x2="4" y2="0" stroke="#999" stroke-width="0.5"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="580" rx="12" fill="#FAFBFC" stroke="#DEE2E6" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="450" y="36" text-anchor="middle" font-size="20" font-weight="bold" fill="#1B3A5C">Barbell Mounting — Side View</text>
+  <text x="450" y="56" text-anchor="middle" font-size="13" fill="#888">P-Clamp + Enclosure on 50mm Olympic Sleeve</text>
+
+  <!-- ===== BARBELL - CROSS SECTION VIEW ===== -->
+
+  <!-- Bar shaft (28mm center) -->
+  <rect x="30" y="195" width="340" height="40" rx="4" fill="url(#barGrad)" stroke="#777" stroke-width="1.5"/>
+  <!-- Knurling pattern -->
+  <rect x="60" y="195" width="280" height="40" rx="0" fill="url(#knurl)" opacity="0.3"/>
+  <text x="200" y="220" text-anchor="middle" font-size="11" fill="white" font-weight="bold">Bar Shaft (28mm Ø)</text>
+
+  <!-- Collar/bushing -->
+  <rect x="370" y="188" width="20" height="54" rx="2" fill="#999" stroke="#666" stroke-width="1.5"/>
+
+  <!-- Sleeve (50mm rotating) -->
+  <rect x="390" y="175" width="470" height="80" rx="4" fill="url(#sleeveGrad)" stroke="#999" stroke-width="1.5"/>
+  <text x="625" y="220" text-anchor="middle" font-size="12" fill="#666" font-weight="bold">Sleeve (50mm Ø — rotating)</text>
+
+  <!-- End cap -->
+  <rect x="856" y="182" width="14" height="66" rx="4" fill="#888" stroke="#666" stroke-width="1.5"/>
+
+  <!-- ===== WEIGHT PLATE (right side) ===== -->
+  <rect x="720" y="120" width="40" height="190" rx="4" fill="#555" stroke="#333" stroke-width="2" filter="url(#shadow)"/>
+  <text x="740" y="120" text-anchor="middle" font-size="10" fill="#333" transform="rotate(-90,740,120)">Weight Plate</text>
+
+  <!-- ===== BARBELL COLLAR ===== -->
+  <rect x="680" y="168" width="30" height="94" rx="4" fill="#E74C3C" stroke="#C0392B" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="695" y="160" text-anchor="middle" font-size="9" fill="#E74C3C" font-weight="bold">Collar</text>
+
+  <!-- ===== TRACKER ASSEMBLY ===== -->
+
+  <!-- P-Clamp (wraps around sleeve) -->
+  <!-- Bottom arc -->
+  <path d="M445,255 Q445,280 470,285 L570,285 Q595,280 595,255" fill="none" stroke="#777" stroke-width="3"/>
+  <!-- Top arc (open clamp) -->
+  <path d="M445,175 Q445,150 470,145 L570,145 Q595,150 595,175" fill="none" stroke="#777" stroke-width="3"/>
+  <!-- Screw point at top -->
+  <rect x="510" y="132" width="20" height="16" rx="2" fill="#888" stroke="#666" stroke-width="1.5"/>
+  <line x1="520" y1="132" x2="520" y2="120" stroke="#666" stroke-width="2"/>
+  <circle cx="520" cy="116" r="5" fill="#888" stroke="#666" stroke-width="1"/>
+
+  <!-- Rubber lining (inside P-clamp) -->
+  <path d="M450,254 Q450,274 472,278 L568,278 Q590,274 590,254" fill="none" stroke="#E67E22" stroke-width="2" stroke-dasharray="4,2"/>
+  <path d="M450,176 Q450,156 472,152 L568,152 Q590,156 590,176" fill="none" stroke="#E67E22" stroke-width="2" stroke-dasharray="4,2"/>
+
+  <!-- P-clamp mounting tab (extends downward) -->
+  <rect x="505" y="285" width="30" height="25" rx="2" fill="#999" stroke="#777" stroke-width="1.5"/>
+  <circle cx="520" cy="298" r="4" fill="#FAFBFC" stroke="#777" stroke-width="1"/>
+
+  <!-- Enclosure (below P-clamp) -->
+  <rect x="460" y="310" width="120" height="70" rx="8" fill="#E0E0E0" stroke="#666" stroke-width="2.5" filter="url(#shadow)"/>
+  <text x="520" y="338" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">Zulkit Box</text>
+  <text x="520" y="354" text-anchor="middle" font-size="9" fill="#666">Electronics inside</text>
+  <text x="520" y="368" text-anchor="middle" font-size="9" fill="#666">63 × 58 × 35mm</text>
+
+  <!-- Bolt connecting P-clamp tab to enclosure -->
+  <line x1="520" y1="294" x2="520" y2="314" stroke="#333" stroke-width="2"/>
+  <circle cx="520" cy="308" r="3" fill="#333"/>
+
+  <!-- USB-C hole indicator -->
+  <rect x="457" y="335" width="6" height="14" rx="2" fill="#27AE60" stroke="#1E8449" stroke-width="1"/>
+  <text x="445" y="345" text-anchor="end" font-size="8" fill="#27AE60">USB-C</text>
+
+  <!-- ===== LABELS AND CALLOUTS ===== -->
+
+  <!-- P-clamp label -->
+  <line x1="600" y1="148" x2="660" y2="100" stroke="#777" stroke-width="1"/>
+  <rect x="660" y="84" width="170" height="38" rx="5" fill="white" stroke="#777" stroke-width="1.5"/>
+  <text x="745" y="100" text-anchor="middle" font-size="10" font-weight="bold" fill="#333">ISPINNER P-Clamp</text>
+  <text x="745" y="114" text-anchor="middle" font-size="9" fill="#666">2" rubber-cushioned, SS</text>
+
+  <!-- Mounting position label -->
+  <line x1="430" y1="215" x2="410" y2="100" stroke="#2E75B6" stroke-width="1" stroke-dasharray="3,2"/>
+  <rect x="320" y="76" width="180" height="38" rx="5" fill="#E8F4FD" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="410" y="92" text-anchor="middle" font-size="10" font-weight="bold" fill="#2E75B6">Mount here: inside of</text>
+  <text x="410" y="106" text-anchor="middle" font-size="10" fill="#2E75B6">sleeve, near the collar</text>
+
+  <!-- Clearance label -->
+  <line x1="660" y1="260" x2="670" y2="260" stroke="#E74C3C" stroke-width="1.5"/>
+  <line x1="670" y1="215" x2="670" y2="310" stroke="#E74C3C" stroke-width="1.5" stroke-dasharray="3,2"/>
+  <text x="682" y="258" font-size="9" fill="#E74C3C" font-weight="bold">Keep clearance</text>
+  <text x="682" y="272" font-size="9" fill="#E74C3C">from plates</text>
+
+  <!-- ===== SECOND DIAGRAM: CINCH STRAP DETAIL ===== -->
+  <rect x="40" y="415" width="820" height="145" rx="10" fill="white" stroke="#DEE2E6" stroke-width="1.5"/>
+  <text x="60" y="440" font-size="14" font-weight="bold" fill="#1B3A5C">Optional: Add Cinch Strap for Backup Retention</text>
+  <text x="60" y="458" font-size="11" fill="#666">Wrap a 2" hook-and-loop cinch strap around the entire assembly (bar + P-clamp + enclosure)</text>
+
+  <!-- Mini side view with strap -->
+  <!-- Bar cross-section -->
+  <circle cx="350" cy="500" r="25" fill="url(#sleeveGrad)" stroke="#999" stroke-width="1.5"/>
+  <circle cx="350" cy="500" r="14" fill="url(#barGrad)" stroke="#777" stroke-width="1"/>
+  <text x="350" y="504" text-anchor="middle" font-size="8" fill="white">Bar</text>
+
+  <!-- Enclosure below -->
+  <rect x="310" y="530" width="80" height="20" rx="4" fill="#E0E0E0" stroke="#666" stroke-width="1.5"/>
+  <text x="350" y="544" text-anchor="middle" font-size="8" fill="#333">Enclosure</text>
+
+  <!-- Cinch strap (wrapping around everything) -->
+  <ellipse cx="350" cy="510" rx="68" ry="50" fill="none" stroke="#E67E22" stroke-width="3" stroke-dasharray="8,4"/>
+
+  <!-- Strap label -->
+  <line x1="418" y1="486" x2="470" y2="470" stroke="#E67E22" stroke-width="1"/>
+  <text x="475" y="474" font-size="10" fill="#E67E22" font-weight="bold">Cinch strap wraps entire assembly</text>
+  <text x="475" y="488" font-size="9" fill="#E67E22">103 lb rated — safety backup if P-clamp loosens</text>
+
+  <!-- Note about missing strap -->
+  <rect x="475" y="510" width="360" height="38" rx="5" fill="#FFF3CD" stroke="#E67E22" stroke-width="1.5"/>
+  <text x="490" y="527" font-size="10" fill="#856404" font-weight="bold">Not in your current parts list!</text>
+  <text x="490" y="541" font-size="10" fill="#856404">Optional but recommended. ~$6 on Amazon for a 5-pack.</text>
+</svg>

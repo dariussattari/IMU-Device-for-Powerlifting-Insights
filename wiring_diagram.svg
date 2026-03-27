@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <marker id="arrowR" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#2E75B6"/>
+    </marker>
+    <marker id="arrowG" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#27AE60"/>
+    </marker>
+    <marker id="arrowO" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#E67E22"/>
+    </marker>
+    <marker id="arrowP" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#8E44AD"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1000" height="620" rx="12" fill="#FAFBFC" stroke="#DEE2E6" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="500" y="36" text-anchor="middle" font-size="20" font-weight="bold" fill="#1B3A5C">IMU Barbell Tracker — System Wiring Diagram (Dual-IMU)</text>
+  <text x="500" y="56" text-anchor="middle" font-size="13" fill="#888">All connections are plug-and-play — no soldering required</text>
+
+  <!-- ===== ESP32-S3 Feather ===== -->
+  <rect x="60" y="140" width="240" height="180" rx="10" fill="#E8F4FD" stroke="#2E75B6" stroke-width="2.5" filter="url(#shadow)"/>
+  <rect x="60" y="140" width="240" height="32" rx="10" fill="#2E75B6"/>
+  <rect x="60" y="156" width="240" height="16" fill="#2E75B6"/>
+  <text x="180" y="160" text-anchor="middle" font-size="13" font-weight="bold" fill="white">ESP32-S3 Feather (#5477)</text>
+
+  <!-- Feather ports -->
+  <text x="78" y="196" font-size="11" fill="#333" font-weight="bold">Ports:</text>
+  <rect x="78" y="204" width="90" height="20" rx="4" fill="#2E75B6" opacity="0.15" stroke="#2E75B6" stroke-width="1"/>
+  <text x="123" y="218" text-anchor="middle" font-size="10" fill="#2E75B6" font-weight="bold">STEMMA QT (I2C)</text>
+  <rect x="78" y="230" width="90" height="20" rx="4" fill="#27AE60" opacity="0.15" stroke="#27AE60" stroke-width="1"/>
+  <text x="123" y="244" text-anchor="middle" font-size="10" fill="#27AE60" font-weight="bold">USB-C</text>
+  <rect x="78" y="256" width="90" height="20" rx="4" fill="#E67E22" opacity="0.15" stroke="#E67E22" stroke-width="1"/>
+  <text x="123" y="270" text-anchor="middle" font-size="10" fill="#E67E22" font-weight="bold">JST-PH (Battery)</text>
+  <rect x="78" y="282" width="90" height="20" rx="4" fill="#8E44AD" opacity="0.15" stroke="#8E44AD" stroke-width="1"/>
+  <text x="123" y="296" text-anchor="middle" font-size="10" fill="#8E44AD" font-weight="bold">Stacking Headers</text>
+
+  <!-- Feather specs -->
+  <text x="190" y="200" font-size="9" fill="#666">240MHz dual-core</text>
+  <text x="190" y="214" font-size="9" fill="#666">BLE 5.0 + Wi-Fi</text>
+  <text x="190" y="228" font-size="9" fill="#666">LiPo charger built-in</text>
+  <text x="190" y="242" font-size="9" fill="#666">MAX17048 fuel gauge</text>
+
+  <!-- ===== Adalogger FeatherWing ===== -->
+  <rect x="60" y="370" width="240" height="140" rx="10" fill="#F0E8FD" stroke="#8E44AD" stroke-width="2.5" filter="url(#shadow)"/>
+  <rect x="60" y="370" width="240" height="32" rx="10" fill="#8E44AD"/>
+  <rect x="60" y="386" width="240" height="16" fill="#8E44AD"/>
+  <text x="180" y="390" text-anchor="middle" font-size="13" font-weight="bold" fill="white">Adalogger FeatherWing (#2922)</text>
+
+  <text x="78" y="424" font-size="11" fill="#333" font-weight="bold">Features:</text>
+  <text x="78" y="440" font-size="10" fill="#666">MicroSD slot (SPI) — insert 8GB card</text>
+  <text x="78" y="456" font-size="10" fill="#666">PCF8523 RTC (I2C addr: 0x68)</text>
+  <text x="78" y="472" font-size="10" fill="#666">Stacks via pin headers</text>
+  <rect x="78" y="480" width="120" height="18" rx="4" fill="#8E44AD" opacity="0.15" stroke="#8E44AD" stroke-width="1"/>
+  <text x="138" y="493" text-anchor="middle" font-size="10" fill="#8E44AD" font-weight="bold">Stacking Headers</text>
+
+  <!-- Arrow: Feather <-> Adalogger (stacking) -->
+  <line x1="180" y1="320" x2="180" y2="370" stroke="#8E44AD" stroke-width="2.5" stroke-dasharray="6,3" marker-end="url(#arrowP)"/>
+  <text x="192" y="348" font-size="10" fill="#8E44AD" font-weight="bold">Stacks on top</text>
+
+  <!-- ===== IMU #1 ===== -->
+  <rect x="420" y="140" width="220" height="150" rx="10" fill="#E8FDF0" stroke="#27AE60" stroke-width="2.5" filter="url(#shadow)"/>
+  <rect x="420" y="140" width="220" height="32" rx="10" fill="#27AE60"/>
+  <rect x="420" y="156" width="220" height="16" fill="#27AE60"/>
+  <text x="530" y="160" text-anchor="middle" font-size="13" font-weight="bold" fill="white">IMU #1 — LSM6DSOX (#4438)</text>
+
+  <text x="438" y="196" font-size="10" fill="#333" font-weight="bold">I2C Address: 0x6A (default)</text>
+  <text x="438" y="214" font-size="10" fill="#666">±16g accel / ±2000 dps gyro</text>
+  <text x="438" y="230" font-size="10" fill="#666">Up to 6.7 kHz ODR</text>
+  <text x="438" y="248" font-size="10" fill="#666">2x STEMMA QT ports (daisy-chain)</text>
+  <rect x="438" y="258" width="80" height="16" rx="3" fill="#E74C3C" opacity="0.2" stroke="#E74C3C" stroke-width="1"/>
+  <text x="478" y="270" text-anchor="middle" font-size="9" fill="#E74C3C" font-weight="bold">Keep default</text>
+
+  <!-- ===== IMU #2 ===== -->
+  <rect x="420" y="350" width="220" height="150" rx="10" fill="#FDF8E8" stroke="#E67E22" stroke-width="2.5" filter="url(#shadow)"/>
+  <rect x="420" y="350" width="220" height="32" rx="10" fill="#E67E22"/>
+  <rect x="420" y="366" width="220" height="16" fill="#E67E22"/>
+  <text x="530" y="370" text-anchor="middle" font-size="13" font-weight="bold" fill="white">IMU #2 — LSM6DSOX (#4438)</text>
+
+  <text x="438" y="406" font-size="10" fill="#333" font-weight="bold">I2C Address: 0x6B (jumper cut)</text>
+  <text x="438" y="424" font-size="10" fill="#666">±16g accel / ±2000 dps gyro</text>
+  <text x="438" y="442" font-size="10" fill="#666">Up to 6.7 kHz ODR</text>
+  <text x="438" y="460" font-size="10" fill="#666">Mount rotated 90° from IMU #1</text>
+  <rect x="438" y="468" width="120" height="16" rx="3" fill="#E74C3C" opacity="0.2" stroke="#E74C3C" stroke-width="1"/>
+  <text x="498" y="480" text-anchor="middle" font-size="9" fill="#E74C3C" font-weight="bold">CUT SDO/SA0 jumper</text>
+
+  <!-- Arrow: Feather -> IMU #1 (STEMMA QT 50mm) -->
+  <line x1="300" y1="215" x2="416" y2="215" stroke="#2E75B6" stroke-width="2.5" marker-end="url(#arrowR)"/>
+  <rect x="318" y="196" width="80" height="30" rx="5" fill="white" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="358" y="209" text-anchor="middle" font-size="9" fill="#2E75B6" font-weight="bold">STEMMA QT</text>
+  <text x="358" y="221" text-anchor="middle" font-size="9" fill="#2E75B6">50mm cable</text>
+
+  <!-- Arrow: IMU #1 -> IMU #2 (daisy-chain) -->
+  <line x1="530" y1="290" x2="530" y2="346" stroke="#E67E22" stroke-width="2.5" marker-end="url(#arrowO)"/>
+  <rect x="544" y="300" width="96" height="30" rx="5" fill="white" stroke="#E67E22" stroke-width="1.5"/>
+  <text x="592" y="313" text-anchor="middle" font-size="9" fill="#E67E22" font-weight="bold">Daisy-chain</text>
+  <text x="592" y="325" text-anchor="middle" font-size="9" fill="#E67E22">needs 2nd cable!</text>
+
+  <!-- ===== Battery ===== -->
+  <rect x="720" y="140" width="200" height="100" rx="10" fill="#FDE8E8" stroke="#E74C3C" stroke-width="2.5" filter="url(#shadow)"/>
+  <rect x="720" y="140" width="200" height="32" rx="10" fill="#E74C3C"/>
+  <rect x="720" y="156" width="200" height="16" fill="#E74C3C"/>
+  <text x="820" y="160" text-anchor="middle" font-size="13" font-weight="bold" fill="white">LiPo Battery (#1578)</text>
+
+  <text x="738" y="196" font-size="10" fill="#666">500mAh 3.7V</text>
+  <text x="738" y="212" font-size="10" fill="#666">JST-PH connector</text>
+  <text x="738" y="228" font-size="10" fill="#666">2–3 hrs runtime</text>
+
+  <!-- Arrow: Battery -> Feather -->
+  <line x1="716" y1="190" x2="304" y2="270" stroke="#E67E22" stroke-width="2" marker-end="url(#arrowO)"/>
+  <rect x="480" y="216" width="85" height="28" rx="5" fill="white" stroke="#E67E22" stroke-width="1.5"/>
+  <text x="522" y="229" text-anchor="middle" font-size="9" fill="#E67E22" font-weight="bold">JST-PH plug</text>
+  <text x="522" y="240" text-anchor="middle" font-size="9" fill="#E67E22">to battery port</text>
+
+  <!-- ===== MicroSD ===== -->
+  <rect x="720" y="290" width="200" height="80" rx="10" fill="#F5F5F5" stroke="#999" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="720" y="290" width="200" height="28" rx="10" fill="#666"/>
+  <rect x="720" y="304" width="200" height="14" fill="#666"/>
+  <text x="820" y="308" text-anchor="middle" font-size="12" font-weight="bold" fill="white">MicroSD Card (8GB)</text>
+
+  <text x="738" y="338" font-size="10" fill="#666">FAT32 formatted</text>
+  <text x="738" y="354" font-size="10" fill="#666">Insert into Adalogger slot</text>
+
+  <!-- Arrow: SD -> Adalogger -->
+  <path d="M716,340 Q600,380 304,430" fill="none" stroke="#999" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arrowR)"/>
+  <text x="540" y="390" font-size="9" fill="#666">Push into MicroSD slot</text>
+
+  <!-- ===== Computer ===== -->
+  <rect x="720" y="420" width="200" height="80" rx="10" fill="#F0F0F0" stroke="#999" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="720" y="420" width="200" height="28" rx="10" fill="#555"/>
+  <rect x="720" y="434" width="200" height="14" fill="#555"/>
+  <text x="820" y="438" text-anchor="middle" font-size="12" font-weight="bold" fill="white">Your Computer</text>
+  <text x="738" y="468" font-size="10" fill="#666">Arduino IDE 2.x</text>
+  <text x="738" y="484" font-size="10" fill="#666">USB-C connection</text>
+
+  <!-- Arrow: Computer -> Feather -->
+  <path d="M716,460 Q400,500 180,324" fill="none" stroke="#27AE60" stroke-width="2" marker-end="url(#arrowG)"/>
+  <rect x="400" y="440" width="72" height="28" rx="5" fill="white" stroke="#27AE60" stroke-width="1.5"/>
+  <text x="436" y="453" text-anchor="middle" font-size="9" fill="#27AE60" font-weight="bold">USB-C</text>
+  <text x="436" y="464" text-anchor="middle" font-size="9" fill="#27AE60">program/charge</text>
+
+  <!-- ===== I2C Bus Note ===== -->
+  <rect x="60" y="548" width="880" height="56" rx="8" fill="#FFF3CD" stroke="#E67E22" stroke-width="1.5"/>
+  <text x="500" y="570" text-anchor="middle" font-size="12" font-weight="bold" fill="#856404">I2C Bus Addresses:  Feather STEMMA QT → IMU #1 (0x6A) → IMU #2 (0x6B) → RTC (0x68)</text>
+  <text x="500" y="590" text-anchor="middle" font-size="11" fill="#856404">All three devices share the same I2C bus (SDA/SCL). No address conflicts. IMU #2 requires SDO/SA0 jumper cut.</text>
+</svg>
