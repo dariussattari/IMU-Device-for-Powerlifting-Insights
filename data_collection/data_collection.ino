@@ -1,18 +1,20 @@
 /*
- * IMU Barbell Tracker — Data Collection Sketch
- * ==============================================
- * Records IMU data to the SD card as timestamped CSV files.
+ * IMU Barbell Tracker — Data Collection (USB Serial Mode)
+ * ========================================================
+ * Streams IMU data over USB serial as CSV lines.
+ * A Python script on your laptop captures the stream to a .csv file.
+ *
+ * Also writes to SD card if available (dual output).
+ *
  * Supports single-IMU (0x6A only) or dual-IMU (0x6A + 0x6B) mode.
  * Auto-detects how many IMUs are connected at startup.
  *
  * HOW TO USE:
  *   1. Upload this sketch
- *   2. Open Serial Monitor at 115200 to see status
- *   3. Press the BOOT button (GPIO0) to START recording
- *   4. Press it again to STOP recording
- *   5. Remove SD card and open the CSV file on your computer
- *
- * Each recording session creates a new file: /session_001.csv, /session_002.csv, etc.
+ *   2. Run the Python capture script: python3 capture_serial.py
+ *   3. Recording starts/stops automatically via serial commands
+ *      (or press the BOOT button if you prefer manual control)
+ *   4. The CSV file will be saved on your laptop
  *
  * CSV COLUMNS (single IMU):
  *   timestamp_ms, a1x, a1y, a1z, g1x, g1y, g1z
@@ -26,7 +28,7 @@
  * Libraries needed:
  *   - Adafruit LSM6DS
  *   - Adafruit Unified Sensor
- *   - RTClib
+ *   - RTClib (optional, for RTC timestamps)
  */
 
 #include <Wire.h>
@@ -36,15 +38,18 @@
 #include <SD.h>
 
 // ===================== CONFIGURATION =====================
-// Change these to adjust behavior:
 
-const int    SAMPLE_RATE_HZ  = 200;   // Samples per second (max ~416 for dual-IMU)
-const int    SD_CS           = 5;     // Adalogger chip select pin
+const int    SAMPLE_RATE_HZ  = 200;   // Samples per second
+const int    SD_CS           = 10;    // Adalogger chip select pin
 const int    BUTTON_PIN      = 0;     // BOOT button on ESP32-S3 (GPIO0)
 const int    LED_PIN         = 13;    // Built-in LED for status
 
-// Buffering: we batch writes to the SD card for efficiency.
-// At 200Hz, each sample is ~80 bytes, so 50 samples = ~4KB per write.
+// ESP32-S3 Feather SPI pins (must be set explicitly)
+const int    SPI_SCK         = 36;
+const int    SPI_MOSI        = 35;
+const int    SPI_MISO        = 37;
+
+// Buffer size for SD card writes (if SD available)
 const int    BUFFER_SAMPLES  = 50;
 
 // ===================== GLOBALS =====================
@@ -70,7 +75,7 @@ unsigned long sampleCount = 0;
 unsigned long lastSampleUs = 0;
 unsigned long sampleIntervalUs = 0;
 
-// Write buffer
+// Write buffer (for SD card only)
 String writeBuffer = "";
 int bufferCount = 0;
 
@@ -87,11 +92,13 @@ void setup() {
   Serial.println();
   Serial.println("========================================");
   Serial.println("  IMU Barbell Tracker - Data Collection");
+  Serial.println("  (USB Serial + optional SD)");
   Serial.println("========================================");
   Serial.println();
 
   Wire.begin();
-  Wire.setClock(400000);  // Fast I2C (400kHz) for higher throughput
+  Wire.setClock(400000);
+  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SD_CS);
 
   sampleIntervalUs = 1000000UL / SAMPLE_RATE_HZ;
 
@@ -123,7 +130,7 @@ void setup() {
 
   dualMode = imu1OK && imu2OK;
 
-  // ===== Initialize RTC =====
+  // ===== Initialize RTC (optional) =====
   Serial.print("RTC:           ");
   if (rtc.begin()) {
     rtcOK = true;
@@ -140,42 +147,41 @@ void setup() {
     Serial.println("NOT FOUND (timestamps will use millis only)");
   }
 
-  // ===== Initialize SD =====
+  // ===== Initialize SD (optional) =====
   Serial.print("SD Card:       ");
   if (SD.begin(SD_CS)) {
     sdOK = true;
-    Serial.println("OK");
-
-    // Find next session number
+    Serial.println("OK (will save to SD too)");
     sessionNumber = 1;
     while (SD.exists(getFilename(sessionNumber))) {
       sessionNumber++;
     }
     Serial.printf("Next session file: %s\n", getFilename(sessionNumber).c_str());
   } else {
-    Serial.println("NOT FOUND - CANNOT RECORD");
+    Serial.println("NOT FOUND (USB serial only - this is fine)");
   }
 
   Serial.println();
   Serial.println("========================================");
   if (dualMode) {
     Serial.println("  MODE: Dual-IMU");
-    Serial.printf("  RATE: %d Hz per sensor\n", SAMPLE_RATE_HZ);
-    Serial.printf("  DATA: ~%.1f KB/sec\n", SAMPLE_RATE_HZ * 80.0 / 1024.0);
   } else if (imu1OK) {
     Serial.println("  MODE: Single-IMU");
-    Serial.printf("  RATE: %d Hz\n", SAMPLE_RATE_HZ);
-    Serial.printf("  DATA: ~%.1f KB/sec\n", SAMPLE_RATE_HZ * 48.0 / 1024.0);
   }
+  Serial.printf("  RATE: %d Hz\n", SAMPLE_RATE_HZ);
+  Serial.printf("  OUTPUT: USB Serial%s\n", sdOK ? " + SD Card" : "");
   Serial.println("========================================");
   Serial.println();
 
-  if (imu1OK && sdOK) {
-    Serial.println(">> Press BOOT button to START recording");
-    Serial.println(">> Press again to STOP");
-    Serial.println(">> LED = ON while recording\n");
+  if (imu1OK) {
+    Serial.println(">> Send 'START' over serial to begin recording");
+    Serial.println(">> Send 'STOP' to end recording");
+    Serial.println(">> (BOOT button also works if accessible)");
+    Serial.println(">> LED = ON while recording");
+    Serial.println(">> Run: python3 capture_serial.py\n");
+    Serial.println("READY");
   } else {
-    Serial.println("ERROR: Cannot start - check IMU and SD card connections.");
+    Serial.println("ERROR: No IMU found - check connections.");
   }
 }
 
@@ -186,33 +192,20 @@ String getFilename(int num) {
 }
 
 bool startRecording() {
-  String filename = getFilename(sessionNumber);
-  dataFile = SD.open(filename.c_str(), FILE_WRITE);
-  if (!dataFile) {
-    Serial.println("ERROR: Could not create file!");
-    return false;
+  // Open SD file if available
+  if (sdOK) {
+    String filename = getFilename(sessionNumber);
+    dataFile = SD.open(filename.c_str(), FILE_WRITE);
+    if (dataFile) {
+      if (dualMode) {
+        dataFile.println("timestamp_ms,a1x,a1y,a1z,g1x,g1y,g1z,a2x,a2y,a2z,g2x,g2y,g2z");
+      } else {
+        dataFile.println("timestamp_ms,a1x,a1y,a1z,g1x,g1y,g1z");
+      }
+      dataFile.printf("# Sample rate: %d Hz\n", SAMPLE_RATE_HZ);
+      dataFile.flush();
+    }
   }
-
-  // Write CSV header
-  if (dualMode) {
-    dataFile.println("timestamp_ms,a1x,a1y,a1z,g1x,g1y,g1z,a2x,a2y,a2z,g2x,g2y,g2z");
-  } else {
-    dataFile.println("timestamp_ms,a1x,a1y,a1z,g1x,g1y,g1z");
-  }
-
-  // Write metadata as comment
-  if (rtcOK) {
-    DateTime now = rtc.now();
-    dataFile.printf("# Started: %04d-%02d-%02d %02d:%02d:%02d\n",
-                    now.year(), now.month(), now.day(),
-                    now.hour(), now.minute(), now.second());
-  }
-  dataFile.printf("# Sample rate: %d Hz\n", SAMPLE_RATE_HZ);
-  dataFile.printf("# Mode: %s\n", dualMode ? "dual-IMU" : "single-IMU");
-  dataFile.printf("# Accel range: +/-16g\n");
-  dataFile.printf("# Gyro range: +/-2000 dps\n");
-  dataFile.printf("# Units: acceleration in m/s^2, gyro in rad/s\n");
-  dataFile.flush();
 
   recordingStartMs = millis();
   sampleCount = 0;
@@ -223,8 +216,14 @@ bool startRecording() {
   recording = true;
   digitalWrite(LED_PIN, HIGH);
 
-  Serial.printf("RECORDING to %s ...\n", filename.c_str());
-  Serial.println("Press BOOT button to stop.\n");
+  // Send start marker that the Python script will detect
+  Serial.println("---DATA_START---");
+  if (dualMode) {
+    Serial.println("timestamp_ms,a1x,a1y,a1z,g1x,g1y,g1z,a2x,a2y,a2z,g2x,g2y,g2z");
+  } else {
+    Serial.println("timestamp_ms,a1x,a1y,a1z,g1x,g1y,g1z");
+  }
+
   return true;
 }
 
@@ -232,32 +231,37 @@ void stopRecording() {
   recording = false;
   digitalWrite(LED_PIN, LOW);
 
-  // Flush remaining buffer
-  if (bufferCount > 0) {
-    dataFile.print(writeBuffer);
-    writeBuffer = "";
-    bufferCount = 0;
-  }
+  // Send stop marker
+  Serial.println("---DATA_STOP---");
 
   unsigned long duration = millis() - recordingStartMs;
   float actualRate = (float)sampleCount / (duration / 1000.0);
 
-  dataFile.printf("# Ended after %.1f seconds\n", duration / 1000.0);
-  dataFile.printf("# Total samples: %lu\n", sampleCount);
-  dataFile.printf("# Actual sample rate: %.1f Hz\n", actualRate);
-  dataFile.close();
+  // Close SD file if open
+  if (sdOK && dataFile) {
+    if (bufferCount > 0) {
+      dataFile.print(writeBuffer);
+      writeBuffer = "";
+      bufferCount = 0;
+    }
+    dataFile.printf("# Total samples: %lu\n", sampleCount);
+    dataFile.printf("# Actual sample rate: %.1f Hz\n", actualRate);
+    dataFile.close();
+  }
 
   Serial.println();
   Serial.println("========================================");
   Serial.println("  RECORDING STOPPED");
   Serial.println("========================================");
-  Serial.printf("  File:       %s\n", getFilename(sessionNumber).c_str());
   Serial.printf("  Duration:   %.1f seconds\n", duration / 1000.0);
   Serial.printf("  Samples:    %lu\n", sampleCount);
   Serial.printf("  Avg rate:   %.1f Hz\n", actualRate);
+  if (sdOK) {
+    Serial.printf("  SD file:    %s\n", getFilename(sessionNumber).c_str());
+  }
   Serial.println("========================================\n");
 
-  sessionNumber++;
+  if (sdOK) sessionNumber++;
   Serial.println(">> Press BOOT button to start new recording");
 }
 
@@ -280,6 +284,22 @@ void checkButton() {
   }
 }
 
+void checkSerialCommand() {
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    cmd.toUpperCase();
+
+    if (cmd == "START" && !recording) {
+      startRecording();
+    } else if (cmd == "STOP" && recording) {
+      stopRecording();
+    } else if (cmd == "PING") {
+      Serial.println("PONG");
+    }
+  }
+}
+
 void collectSample() {
   unsigned long now = millis();
   unsigned long ts = now - recordingStartMs;
@@ -294,7 +314,7 @@ void collectSample() {
     imu2.getEvent(&a2, &g2, &t2);
 
     snprintf(line, sizeof(line),
-      "%lu,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f\n",
+      "%lu,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f",
       ts,
       a1.acceleration.x, a1.acceleration.y, a1.acceleration.z,
       g1.gyro.x, g1.gyro.y, g1.gyro.z,
@@ -302,35 +322,34 @@ void collectSample() {
       g2.gyro.x, g2.gyro.y, g2.gyro.z);
   } else {
     snprintf(line, sizeof(line),
-      "%lu,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f\n",
+      "%lu,%.3f,%.3f,%.3f,%.4f,%.4f,%.4f",
       ts,
       a1.acceleration.x, a1.acceleration.y, a1.acceleration.z,
       g1.gyro.x, g1.gyro.y, g1.gyro.z);
   }
 
-  writeBuffer += line;
-  bufferCount++;
+  // Always stream over USB serial
+  Serial.println(line);
+
+  // Also write to SD if available
+  if (sdOK && dataFile) {
+    writeBuffer += line;
+    writeBuffer += "\n";
+    bufferCount++;
+    if (bufferCount >= BUFFER_SAMPLES) {
+      dataFile.print(writeBuffer);
+      dataFile.flush();
+      writeBuffer = "";
+      bufferCount = 0;
+    }
+  }
+
   sampleCount++;
-
-  // Flush buffer to SD card periodically
-  if (bufferCount >= BUFFER_SAMPLES) {
-    dataFile.print(writeBuffer);
-    dataFile.flush();
-    writeBuffer = "";
-    bufferCount = 0;
-  }
-
-  // Print progress every 5 seconds
-  if (sampleCount % (SAMPLE_RATE_HZ * 5) == 0) {
-    float elapsed = (millis() - recordingStartMs) / 1000.0;
-    float rate = sampleCount / elapsed;
-    Serial.printf("  Recording... %.0fs | %lu samples | %.0f Hz avg\n",
-                  elapsed, sampleCount, rate);
-  }
 }
 
 void loop() {
   checkButton();
+  checkSerialCommand();
 
   if (recording && imu1OK) {
     unsigned long nowUs = micros();

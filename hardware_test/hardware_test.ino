@@ -24,7 +24,12 @@
 #include <RTClib.h>
 #include <SD.h>
 
-const int SD_CS = 5;
+const int SD_CS = 10;
+
+// ESP32-S3 Feather SPI pins (must be set explicitly)
+const int SPI_SCK  = 36;
+const int SPI_MOSI = 35;
+const int SPI_MISO = 37;
 
 Adafruit_LSM6DSOX imu1;
 Adafruit_LSM6DSOX imu2;
@@ -49,6 +54,7 @@ void setup() {
   Serial.println();
 
   Wire.begin();
+  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SD_CS);
 
   // ===== I2C BUS SCAN =====
   // This tells you exactly what's connected
