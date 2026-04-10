@@ -1,27 +1,20 @@
 """
-Extended Kalman Filter for IMU-based Barbell Tracking
-=====================================================
+IMU-based Barbell Bar Path Reconstruction
+==========================================
 
-Fuses 6-DOF IMU data (accelerometer + gyroscope) to estimate:
-  - 3D orientation (quaternion)
-  - 3D velocity (m/s)
-  - 3D position (m)
+Reconstructs 2D bar path (vertical + forward/back) from a single 6-DOF IMU
+mounted on a barbell.
 
-Based on Kok, Hol, & Schön (2017) methodology with adaptations for
-barbell-mounted IMU:
-  - Gravity reference updates correct orientation drift
-  - Zero-velocity updates (ZUPT) bound position drift between reps
-  - Per-rep position reset ensures each rep starts at the origin
+Algorithm:
+  1. Mahony complementary filter for orientation (gyro + gravity reference)
+  2. Rotate accelerometer to world frame, subtract gravity
+  3. Per-rep constrained double integration:
+     - Mean-remove acceleration to enforce v(0)=v(T)=0
+     - Linear detrend position to enforce p(0)≈p(T)
 
-State vector (10):
-  q = [qw, qx, qy, qz]   — orientation quaternion (sensor → world)
-  v = [vx, vy, vz]        — velocity in world frame (m/s)
-  p = [px, py, pz]         — position in world frame (m)
-
-IMU orientation convention (user-defined):
-  Y = up (gravity axis)
-  -X = forward (toward lifter in unracked position)
-  Z = lateral
+Coordinate conventions:
+  Sensor frame:  Y = up (gravity), -X = forward (toward lifter), Z = lateral
+  World frame:   Y = vertical (up +), X = horizontal (toward lifter +)
 
 Author: Darius Sattari (Harvard)
 """
@@ -33,7 +26,7 @@ from scipy.signal import butter, filtfilt
 # ── Quaternion utilities ────────────────────────────────────────────
 
 def quat_mult(q, r):
-    """Hamilton product of two quaternions q ⊗ r."""
+    """Hamilton product q ⊗ r."""
     qw, qx, qy, qz = q
     rw, rx, ry, rz = r
     return np.array([
@@ -45,20 +38,16 @@ def quat_mult(q, r):
 
 
 def quat_conj(q):
-    """Conjugate of a quaternion."""
     return np.array([q[0], -q[1], -q[2], -q[3]])
 
 
 def quat_normalize(q):
-    """Normalize quaternion to unit length."""
     n = np.linalg.norm(q)
-    if n < 1e-10:
-        return np.array([1.0, 0.0, 0.0, 0.0])
-    return q / n
+    return q / n if n > 1e-10 else np.array([1.0, 0.0, 0.0, 0.0])
 
 
 def quat_to_rotation_matrix(q):
-    """Convert unit quaternion to 3x3 rotation matrix (sensor → world)."""
+    """Unit quaternion → 3×3 rotation matrix (sensor → world)."""
     q = quat_normalize(q)
     qw, qx, qy, qz = q
     return np.array([
@@ -68,406 +57,238 @@ def quat_to_rotation_matrix(q):
     ])
 
 
-def quat_from_two_vectors(v_from, v_to):
-    """Quaternion that rotates v_from to align with v_to."""
-    v_from = v_from / np.linalg.norm(v_from)
-    v_to = v_to / np.linalg.norm(v_to)
-    cross = np.cross(v_from, v_to)
-    dot = np.dot(v_from, v_to)
-    if dot < -0.999999:
-        # Vectors are anti-parallel; pick an arbitrary perpendicular axis
-        perp = np.array([1, 0, 0]) if abs(v_from[0]) < 0.9 else np.array([0, 1, 0])
-        axis = np.cross(v_from, perp)
-        axis = axis / np.linalg.norm(axis)
-        return np.array([0.0, axis[0], axis[1], axis[2]])
+def quat_from_accel(accel):
+    """Quaternion aligning sensor gravity with world Y-up."""
+    a = accel / np.linalg.norm(accel)
+    cross = np.cross(a, [0, 1, 0])
+    dot = np.dot(a, [0, 1, 0])
+    if dot < -0.9999:
+        return np.array([0.0, 1.0, 0.0, 0.0])
     w = 1.0 + dot
-    q = np.array([w, cross[0], cross[1], cross[2]])
-    return quat_normalize(q)
+    return quat_normalize(np.array([w, cross[0], cross[1], cross[2]]))
 
 
-def rotate_vector_by_quat(q, v):
-    """Rotate vector v by quaternion q: v' = q ⊗ [0,v] ⊗ q*."""
-    v_quat = np.array([0.0, v[0], v[1], v[2]])
-    rotated = quat_mult(quat_mult(q, v_quat), quat_conj(q))
-    return rotated[1:4]
+# ── Mahony complementary filter ─────────────────────────────────────
 
-
-# ── EKF Implementation ─────────────────────────────────────────────
-
-class BarbellEKF:
+def estimate_orientation(accel_data, gyro_data, sample_rate, kp=1.0):
     """
-    Extended Kalman Filter for barbell position tracking.
-
-    Uses an error-state (indirect) formulation where the nominal state
-    is propagated with the gyroscope, and the error state is corrected
-    by accelerometer gravity references and ZUPT.
-    """
-
-    def __init__(self, dt, gravity=9.81):
-        self.dt = dt
-        self.g = gravity
-        self.g_world = np.array([0.0, self.g, 0.0])  # Y-up convention
-
-        # ── Nominal state ──
-        self.q = np.array([1.0, 0.0, 0.0, 0.0])  # orientation quaternion
-        self.v = np.zeros(3)                        # velocity (world frame)
-        self.p = np.zeros(3)                        # position (world frame)
-
-        # ── Error-state covariance (9x9) ──
-        # Error state: [dθ(3), dv(3), dp(3)]
-        # dθ = orientation error (rotation vector)
-        # dv = velocity error
-        # dp = position error
-        self.P = np.eye(9) * 0.01
-
-        # ── Process noise ──
-        self.sigma_gyro = 0.01       # rad/s — gyroscope noise density
-        self.sigma_accel = 0.5       # m/s² — accelerometer noise density
-        self.sigma_gyro_bias = 0.001 # rad/s² — gyro bias random walk (unused for now)
-
-        # ── Measurement noise ──
-        self.sigma_gravity = 0.5     # m/s² — gravity reference measurement noise
-        self.sigma_zupt = 0.01       # m/s — ZUPT velocity measurement noise
-
-    def initialize_from_accel(self, accel):
-        """
-        Initialize orientation quaternion so that the measured acceleration
-        (which should be ~gravity when stationary) maps to the world-frame
-        gravity vector [0, g, 0].
-        """
-        # In sensor frame, gravity points in the direction of the accel reading
-        accel_normalized = accel / np.linalg.norm(accel)
-        # World-frame gravity direction
-        gravity_world = np.array([0.0, 1.0, 0.0])
-        # Find quaternion that rotates sensor gravity to world gravity
-        self.q = quat_from_two_vectors(accel_normalized, gravity_world)
-        self.v = np.zeros(3)
-        self.p = np.zeros(3)
-        self.P = np.eye(9) * 0.01
-
-    def predict(self, gyro, accel):
-        """
-        Prediction step: propagate state using gyroscope and accelerometer.
-
-        Args:
-            gyro: [gx, gy, gz] in rad/s (sensor frame)
-            accel: [ax, ay, az] in m/s² (sensor frame)
-        """
-        dt = self.dt
-
-        # ── 1. Update orientation with gyroscope ──
-        omega = gyro  # angular velocity in sensor frame
-        omega_norm = np.linalg.norm(omega)
-
-        if omega_norm > 1e-8:
-            # Quaternion derivative: dq/dt = 0.5 * q ⊗ [0, ω]
-            angle = omega_norm * dt
-            axis = omega / omega_norm
-            # Small rotation quaternion
-            dq = np.array([
-                np.cos(angle / 2),
-                axis[0] * np.sin(angle / 2),
-                axis[1] * np.sin(angle / 2),
-                axis[2] * np.sin(angle / 2),
-            ])
-            self.q = quat_normalize(quat_mult(self.q, dq))
-
-        # ── 2. Rotate accel to world frame and remove gravity ──
-        R = quat_to_rotation_matrix(self.q)
-        accel_world = R @ accel  # sensor → world
-        accel_linear = accel_world - self.g_world  # remove gravity
-
-        # ── 3. Integrate velocity and position ──
-        self.p = self.p + self.v * dt + 0.5 * accel_linear * dt**2
-        self.v = self.v + accel_linear * dt
-
-        # ── 4. Propagate error-state covariance ──
-        # Linearized state transition for error state
-        F = np.eye(9)
-        # dθ propagation (gyro integration)
-        F[0:3, 0:3] = np.eye(3) - self._skew(omega) * dt
-        # dv depends on orientation error (cross product with accel)
-        F[3:6, 0:3] = -R @ self._skew(accel) * dt
-        # dp depends on dv
-        F[6:9, 3:6] = np.eye(3) * dt
-
-        # Process noise
-        Q = np.zeros((9, 9))
-        Q[0:3, 0:3] = np.eye(3) * (self.sigma_gyro * dt)**2
-        Q[3:6, 3:6] = np.eye(3) * (self.sigma_accel * dt)**2
-        Q[6:9, 6:9] = np.eye(3) * (self.sigma_accel * dt**2 / 2)**2
-
-        self.P = F @ self.P @ F.T + Q
-
-    def update_gravity(self, accel, weight=1.0):
-        """
-        Measurement update using accelerometer as a gravity reference.
-
-        When the bar is not accelerating much, the accelerometer reading
-        should point in the direction of gravity. This corrects orientation
-        drift, especially around the horizontal axes.
-
-        Args:
-            accel: [ax, ay, az] in m/s² (sensor frame)
-            weight: scaling factor for measurement confidence (0-1)
-        """
-        R = quat_to_rotation_matrix(self.q)
-
-        # Predicted gravity in sensor frame: g_sensor = R^T @ g_world
-        g_pred = R.T @ self.g_world
-
-        # Measurement: normalized accelerometer reading scaled to g
-        accel_norm = np.linalg.norm(accel)
-        if accel_norm < 1e-6:
-            return
-
-        g_meas = accel / accel_norm * self.g
-
-        # Innovation (measurement residual)
-        y = g_meas - g_pred  # 3x1
-
-        # Measurement Jacobian: H maps error state to predicted measurement change
-        # d(g_pred)/d(dθ) = [g_pred]× (skew symmetric matrix)
-        H = np.zeros((3, 9))
-        H[0:3, 0:3] = self._skew(g_pred)
-
-        # Measurement noise (scaled by weight — lower weight = more noise)
-        R_noise = np.eye(3) * (self.sigma_gravity / max(weight, 0.1))**2
-
-        # Kalman gain
-        S = H @ self.P @ H.T + R_noise
-        K = self.P @ H.T @ np.linalg.inv(S)
-
-        # Error state correction
-        dx = K @ y
-
-        # Apply correction
-        self._apply_error_state(dx)
-
-        # Update covariance
-        I_KH = np.eye(9) - K @ H
-        self.P = I_KH @ self.P @ I_KH.T + K @ R_noise @ K.T  # Joseph form
-
-    def update_zupt(self):
-        """
-        Zero-velocity update: when the bar is stationary, force velocity to zero.
-        This is the most powerful drift correction available.
-        """
-        # Measurement: velocity should be zero
-        y = -self.v  # innovation = 0 - v_predicted
-
-        # Measurement Jacobian: H maps error state to velocity
-        H = np.zeros((3, 9))
-        H[0:3, 3:6] = np.eye(3)
-
-        # Measurement noise
-        R_noise = np.eye(3) * self.sigma_zupt**2
-
-        # Kalman gain
-        S = H @ self.P @ H.T + R_noise
-        K = self.P @ H.T @ np.linalg.inv(S)
-
-        # Error state correction
-        dx = K @ y
-
-        # Apply correction
-        self._apply_error_state(dx)
-
-        # Update covariance (Joseph form for numerical stability)
-        I_KH = np.eye(9) - K @ H
-        self.P = I_KH @ self.P @ I_KH.T + K @ R_noise @ K.T
-
-    def _apply_error_state(self, dx):
-        """Apply error-state correction to nominal state."""
-        # Orientation correction
-        dtheta = dx[0:3]
-        angle = np.linalg.norm(dtheta)
-        if angle > 1e-8:
-            axis = dtheta / angle
-            dq = np.array([
-                np.cos(angle / 2),
-                axis[0] * np.sin(angle / 2),
-                axis[1] * np.sin(angle / 2),
-                axis[2] * np.sin(angle / 2),
-            ])
-            self.q = quat_normalize(quat_mult(self.q, dq))
-
-        # Velocity and position correction
-        self.v += dx[3:6]
-        self.p += dx[6:9]
-
-    @staticmethod
-    def _skew(v):
-        """Skew-symmetric matrix from 3-vector."""
-        return np.array([
-            [    0, -v[2],  v[1]],
-            [ v[2],     0, -v[0]],
-            [-v[1],  v[0],     0],
-        ])
-
-
-# ── High-level processing function ─────────────────────────────────
-
-def estimate_bar_path(accel_data, gyro_data, sample_rate,
-                      zupt_accel_thresh=1.5, zupt_gyro_thresh=0.15,
-                      gravity=9.81):
-    """
-    Estimate 3D bar path from raw IMU data using EKF.
-
-    Args:
-        accel_data: Nx3 array of accelerometer readings (m/s²)
-        gyro_data:  Nx3 array of gyroscope readings (rad/s)
-        sample_rate: Hz
-        zupt_accel_thresh: stationary detection threshold for accel energy
-        zupt_gyro_thresh: stationary detection threshold for gyro energy
-        gravity: local gravity magnitude
-
-    Returns:
-        dict with keys:
-            'position': Nx3 array (m), world frame [X, Y, Z]
-            'velocity': Nx3 array (m/s), world frame
-            'orientation': Nx4 array (quaternions)
-            'is_stationary': Nx1 boolean array
-            'accel_world': Nx3 array, gravity-compensated world-frame acceleration
+    Mahony (2008) complementary filter for orientation.
+    Fuses gyroscope with accelerometer gravity reference.
+    Includes automatic gyro bias removal from calibration period.
     """
     n = len(accel_data)
     dt = 1.0 / sample_rate
 
-    # ── Detect stationary periods ──
-    # Low-pass filter for stable energy estimation
-    nyq = 0.5 * sample_rate
-    b, a = butter(2, 2.0 / nyq, btype='low')
+    cal_n = min(int(0.5 * sample_rate), n)
+    q = quat_from_accel(np.mean(accel_data[:cal_n], axis=0))
+    gyro_bias = np.mean(gyro_data[:cal_n], axis=0)
 
-    accel_lin_energy = np.zeros(n)
-    gyro_energy = np.zeros(n)
-
-    # We need gravity removal for energy calculation
-    # Use first second as calibration
-    cal_n = min(sample_rate, n)
-    gravity_bias = np.mean(accel_data[:cal_n], axis=0)
-
-    accel_debiased = accel_data - gravity_bias
-    accel_lin_energy = np.sqrt(np.sum(accel_debiased**2, axis=1))
-    gyro_energy_raw = np.sqrt(np.sum(gyro_data**2, axis=1))
-
-    if n > 12:  # filtfilt needs minimum length
-        accel_lin_energy = filtfilt(b, a, accel_lin_energy)
-        gyro_energy = filtfilt(b, a, gyro_energy_raw)
-    else:
-        gyro_energy = gyro_energy_raw
-
-    is_stationary = (accel_lin_energy < zupt_accel_thresh) & (gyro_energy < zupt_gyro_thresh)
-
-    # ── Initialize EKF ──
-    ekf = BarbellEKF(dt, gravity)
-    ekf.initialize_from_accel(np.mean(accel_data[:cal_n], axis=0))
-
-    # Tune process noise based on sensor characteristics
-    ekf.sigma_gyro = 0.01
-    ekf.sigma_accel = 0.5
-    ekf.sigma_gravity = 0.3
-    ekf.sigma_zupt = 0.005
-
-    # ── Output arrays ──
-    positions = np.zeros((n, 3))
-    velocities = np.zeros((n, 3))
     orientations = np.zeros((n, 4))
-    accel_world_out = np.zeros((n, 3))
+    orientations[0] = q
 
-    orientations[0] = ekf.q
-
-    # ── Run EKF ──
     for i in range(1, n):
+        gyro = gyro_data[i] - gyro_bias
         accel = accel_data[i]
-        gyro = gyro_data[i]
-
-        # Prediction step
-        ekf.predict(gyro, accel)
-
-        # Gravity reference update
-        # Weight based on how close accel magnitude is to gravity
-        # (high dynamic acceleration = low weight = less trust in gravity ref)
         accel_mag = np.linalg.norm(accel)
-        gravity_weight = np.exp(-5.0 * abs(accel_mag - gravity) / gravity)
 
-        # Only apply gravity update when acceleration is reasonably close to g
-        if gravity_weight > 0.3:
-            ekf.update_gravity(accel, weight=gravity_weight)
+        correction = np.zeros(3)
+        if accel_mag > 1e-6:
+            a_hat = accel / accel_mag
+            R = quat_to_rotation_matrix(q)
+            v_hat = R.T @ np.array([0.0, 1.0, 0.0])
+            error = np.cross(a_hat, v_hat)
 
-        # ZUPT update
-        if is_stationary[i]:
-            ekf.update_zupt()
+            gravity_err = abs(accel_mag - 9.81) / 9.81
+            adaptive_kp = kp * max(0, 1.0 - 3.0 * gravity_err)
+            correction = adaptive_kp * error
 
-        # Store results
-        R = quat_to_rotation_matrix(ekf.q)
-        accel_world = R @ accel - np.array([0, gravity, 0])
+        gyro_c = gyro + correction
+        omega_norm = np.linalg.norm(gyro_c)
+        if omega_norm > 1e-10:
+            angle = omega_norm * dt
+            axis = gyro_c / omega_norm
+            dq = np.array([np.cos(angle/2), axis[0]*np.sin(angle/2),
+                           axis[1]*np.sin(angle/2), axis[2]*np.sin(angle/2)])
+            q = quat_normalize(quat_mult(q, dq))
 
-        positions[i] = ekf.p.copy()
-        velocities[i] = ekf.v.copy()
-        orientations[i] = ekf.q.copy()
-        accel_world_out[i] = accel_world
+        orientations[i] = q
+
+    return orientations
+
+
+# ── Constrained double integration ──────────────────────────────────
+
+def _integrate_segment_constrained(accel_world, dt):
+    """
+    Drift-free double integration for a single rep segment.
+
+    Enforces physical constraints:
+      v(0) = v(T) = 0   (bar at rest at lockout)
+      p(0) = p(T) ≈ 0   (bar returns to lockout)
+
+    Method:
+      1. High-pass filter acceleration at very low frequency (0.15 Hz) to
+         remove DC gravity residuals while preserving motion content (>0.5 Hz)
+      2. Remove mean acceleration → net impulse = 0
+      3. Integrate velocity, linear detrend → v(T) = 0 exactly
+      4. Integrate position, quadratic detrend → p(T) ≈ p(0)
+
+    For longer segments (>1.5s), gravity subtraction residuals cause
+    quadratic drift in position. The high-pass pre-filter removes these
+    slowly-varying residuals before they accumulate through integration.
+    """
+    n = len(accel_world)
+    vel = np.zeros((n, 3))
+    pos = np.zeros((n, 3))
+
+    duration = n * dt
+    nyq = 0.5 / dt
+
+    for k in range(3):
+        a = accel_world[:, k].copy()
+
+        # For longer segments, high-pass filter to remove DC gravity residual
+        # 0.15 Hz cutoff preserves motion content (>0.5 Hz) while removing
+        # slowly-varying bias that causes quadratic drift in integration
+        if duration > 1.2 and n > 15:
+            hp_freq = 0.15
+            if hp_freq / nyq < 0.95:  # ensure valid frequency
+                bh, ah = butter(2, hp_freq / nyq, btype='high')
+                a = filtfilt(bh, ah, a)
+
+        a -= np.mean(a)
+
+        v = np.cumsum(a) * dt
+        # Linear detrend velocity
+        v -= np.linspace(0, v[-1], n)
+
+        p = np.cumsum(v) * dt
+        # For longer segments, use quadratic detrend on position to handle
+        # residual parabolic drift from any remaining acceleration bias
+        if duration > 1.8:
+            t_norm = np.linspace(0, 1, n)
+            coeffs = np.polyfit(t_norm, p, 2)
+            p -= np.polyval(coeffs, t_norm)
+        else:
+            # Linear detrend position
+            p -= np.linspace(0, p[-1], n)
+
+        vel[:, k] = v
+        pos[:, k] = p
+
+    return vel, pos
+
+
+# ── Public API ──────────────────────────────────────────────────────
+
+def estimate_bar_path(accel_data, gyro_data, sample_rate,
+                      zupt_accel_thresh=0.8, zupt_gyro_thresh=0.3,
+                      gravity=9.81):
+    """Estimate full-session bar path (backward compat)."""
+    n = len(accel_data)
+    dt = 1.0 / sample_rate
+
+    orientations = estimate_orientation(accel_data, gyro_data, sample_rate)
+
+    g_world = np.array([0.0, gravity, 0.0])
+    accel_world = np.zeros((n, 3))
+    for i in range(n):
+        R = quat_to_rotation_matrix(orientations[i])
+        accel_world[i] = R @ accel_data[i] - g_world
+
+    vel, pos = _integrate_segment_constrained(accel_world, dt)
+
+    # Stationary detection (for display)
+    cal_n = min(int(0.5 * sample_rate), n)
+    g_bias = np.mean(accel_data[:cal_n], axis=0)
+    accel_lin = accel_data - g_bias
+    ae = np.sqrt(np.sum(accel_lin**2, axis=1))
+    ge = np.sqrt(np.sum(gyro_data**2, axis=1))
+    win = max(3, int(0.05 * sample_rate))
+    if win % 2 == 0:
+        win += 1
+    kern = np.ones(win) / win
+    is_stat = (np.convolve(ae, kern, mode='same') < zupt_accel_thresh) & \
+              (np.convolve(ge, kern, mode='same') < zupt_gyro_thresh)
 
     return {
-        'position': positions,
-        'velocity': velocities,
-        'orientation': orientations,
-        'is_stationary': is_stationary,
-        'accel_world': accel_world_out,
+        'position': pos, 'velocity': vel, 'orientation': orientations,
+        'is_stationary': is_stat, 'accel_world': accel_world,
     }
 
 
 def estimate_per_rep_bar_path(accel_data, gyro_data, sample_rate,
                               rep_starts, rep_ends,
-                              zupt_accel_thresh=1.5, zupt_gyro_thresh=0.15,
+                              zupt_accel_thresh=0.8, zupt_gyro_thresh=0.3,
                               gravity=9.81):
     """
     Estimate bar path independently for each rep.
 
-    Running EKF per-rep bounds drift to within each rep's duration (~2s)
-    rather than the full session. Position is zeroed to lockout (rep start).
-
-    Args:
-        accel_data: Nx3 array
-        gyro_data: Nx3 array
-        sample_rate: Hz
-        rep_starts: list of start indices for each rep
-        rep_ends: list of end indices for each rep
-        zupt_accel_thresh, zupt_gyro_thresh: ZUPT thresholds
-        gravity: local gravity
-
-    Returns:
-        list of dicts, one per rep, each containing:
-            'position': Mx3 (m), zeroed to rep start
-            'velocity': Mx3 (m/s)
-            'orientation': Mx4 (quaternions)
+    Each rep is processed in isolation with constrained double integration.
+    Padding is added before/after for filter settling, then trimmed.
+    The constrained integration enforces v(0)=v(T)=0 and p(0)≈p(T),
+    distributing any integration drift evenly across the segment.
     """
+    n_total = len(accel_data)
+    dt = 1.0 / sample_rate
+    g_world = np.array([0.0, gravity, 0.0])
+
+    # Full-session orientation (computed once for consistency)
+    full_orient = estimate_orientation(accel_data, gyro_data, sample_rate)
+
+    # Precompute full-session world-frame acceleration
+    accel_world_full = np.zeros((n_total, 3))
+    for i in range(n_total):
+        R = quat_to_rotation_matrix(full_orient[i])
+        accel_world_full[i] = R @ accel_data[i] - g_world
+
     results = []
-
     for start, end in zip(rep_starts, rep_ends):
-        # Pad slightly before/after for filter settling
-        pad = min(20, start)  # 0.1s at 200Hz
-        seg_start = start - pad
-        seg_end = min(end + pad, len(accel_data))
+        # Pad segment (0.3s each side for filter settling)
+        pad_before = min(int(0.3 * sample_rate), start)
+        pad_after = min(int(0.3 * sample_rate), n_total - end)
+        seg_start = start - pad_before
+        seg_end = end + pad_after
+        seg_n = seg_end - seg_start
 
-        seg_accel = accel_data[seg_start:seg_end]
-        seg_gyro = gyro_data[seg_start:seg_end]
+        if seg_n < 10:
+            results.append({
+                'position': np.zeros((end - start, 3)),
+                'velocity': np.zeros((end - start, 3)),
+                'orientation': full_orient[start:end].copy(),
+            })
+            continue
 
-        result = estimate_bar_path(
-            seg_accel, seg_gyro, sample_rate,
-            zupt_accel_thresh, zupt_gyro_thresh, gravity
-        )
+        # Extract world-frame acceleration
+        seg_accel = accel_world_full[seg_start:seg_end].copy()
 
-        # Trim padding and zero position to rep start
-        trim_start = pad
-        trim_end = trim_start + (end - start)
+        # Low-pass filter to reduce noise before double integration.
+        # 8 Hz keeps the rep dynamics (motion is 0.5-3 Hz) while cutting
+        # noise that gets amplified by integration.
+        nyq = 0.5 * sample_rate
+        if seg_n > 15:
+            b, a = butter(3, 8.0 / nyq, btype='low')
+            for k in range(3):
+                seg_accel[:, k] = filtfilt(b, a, seg_accel[:, k])
 
-        pos = result['position'][trim_start:trim_end].copy()
-        pos -= pos[0]  # zero to start of rep
+        # Constrained double integration
+        vel, pos = _integrate_segment_constrained(seg_accel, dt)
+
+        # Trim padding — return only the rep portion
+        trim_s = pad_before
+        trim_e = pad_before + (end - start)
+        rep_pos = pos[trim_s:trim_e].copy()
+        rep_vel = vel[trim_s:trim_e].copy()
+        rep_orient = full_orient[start:end].copy()
+
+        # Zero position to start of rep
+        if len(rep_pos) > 0:
+            rep_pos -= rep_pos[0]
 
         results.append({
-            'position': pos,
-            'velocity': result['velocity'][trim_start:trim_end],
-            'orientation': result['orientation'][trim_start:trim_end],
+            'position': rep_pos,
+            'velocity': rep_vel,
+            'orientation': rep_orient,
         })
 
     return results
