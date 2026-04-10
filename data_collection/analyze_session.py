@@ -18,6 +18,9 @@ import pandas as pd
 from scipy.signal import butter, filtfilt, find_peaks
 from scipy.integrate import cumulative_trapezoid
 import plotly.graph_objects as go
+
+# Defer EKF import until after argparse (need CSV path to find project root)
+_ekf_imported = False
 from plotly.subplots import make_subplots
 import plotly.io as pio
 
@@ -86,6 +89,25 @@ def integrate_with_drift_removal(signal, dt, hp_cutoff, fs):
     """Integrate signal and high-pass filter to remove drift."""
     integrated = cumulative_trapezoid(signal, dx=dt, initial=0)
     return butter_filter(integrated, hp_cutoff, fs, btype='high')
+
+# ── Import EKF (find src/ relative to CSV file location) ───────────
+
+def _import_ekf(csv_path):
+    """Find and import the EKF module relative to the project structure."""
+    csv_dir = os.path.dirname(os.path.abspath(csv_path))
+    # Walk up from CSV to find src/bar_path/
+    search = csv_dir
+    for _ in range(5):
+        candidate = os.path.join(search, 'src')
+        if os.path.isdir(os.path.join(candidate, 'bar_path')):
+            if candidate not in sys.path:
+                sys.path.insert(0, candidate)
+            from bar_path.ekf import estimate_per_rep_bar_path
+            return estimate_per_rep_bar_path
+        search = os.path.dirname(search)
+    raise ImportError("Could not find src/bar_path/ekf.py — make sure it exists in the project")
+
+estimate_per_rep_bar_path = _import_ekf(CSV_PATH)
 
 # ── LOAD DATA ───────────────────────────────────────────────────────
 
@@ -515,43 +537,54 @@ fig.add_trace(go.Scatter(x=t_s, y=v_metric_mag, name='|Velocity|',
 for rep in reps:
     fig.add_vline(x=rep['start_s'], line_dash="dash", line_color=ACCENT4, opacity=0.5, row=2, col=2)
 
-# 5. Per-rep bar paths — full eccentric + concentric cycle
-# The rep boundaries (start_idx to end_idx) cover the concentric phase.
-# Extend backward to the previous zero-crossing to capture the eccentric too.
-# Origin (0,0) = lockout position (start of eccentric descent).
+# 5. Per-rep bar paths via EKF — full eccentric + concentric cycle
+# Run the Extended Kalman Filter per-rep for drift-bounded position estimation.
+print("Running EKF for per-rep bar paths...")
+
 colors_reps = [ACCENT, ACCENT2, ACCENT3, ACCENT4, '#c084fc', '#fb923c', '#38bdf8', '#f472b6']
 zero_crossings_plot = np.where(np.diff(np.sign(v_vert_smooth)))[0]
 
-for i, rep in enumerate(reps):
-    conc_start = rep['start_idx']  # turnaround at chest
-    conc_end = rep['end_idx']      # lockout after press
+# Build full rep boundaries (eccentric start → lockout) for EKF
+accel_data = np.column_stack([ax_f, ay_f, az_f])
+gyro_data = np.column_stack([gx_f, gy_f, gz_f])
 
-    # Find the zero-crossing before conc_start = start of eccentric (lockout)
+ekf_rep_starts = []
+ekf_rep_ends = []
+for rep in reps:
+    conc_start = rep['start_idx']
+    conc_end = rep['end_idx']
     ecc_starts = zero_crossings_plot[zero_crossings_plot < conc_start]
-    if len(ecc_starts) > 0:
-        full_start = ecc_starts[-1]
-    else:
-        full_start = conc_start  # fallback: just use concentric
+    full_start = ecc_starts[-1] if len(ecc_starts) > 0 else conc_start
+    ekf_rep_starts.append(full_start)
+    ekf_rep_ends.append(conc_end)
 
+ekf_results = estimate_per_rep_bar_path(
+    accel_data, gyro_data, SAMPLE_RATE,
+    ekf_rep_starts, ekf_rep_ends
+)
+
+for i, (rep, ekf_rep) in enumerate(zip(reps, ekf_results)):
+    pos = ekf_rep['position']
     color = colors_reps[i % len(colors_reps)]
-    # Forward/back (X axis, negated so forward = positive on plot)
-    h = -(pos_horizontal[full_start:conc_end] - pos_horizontal[full_start]) * 100
-    # Vertical (Y axis), zeroed to lockout position
-    v = (pos_vertical[full_start:conc_end] - pos_vertical[full_start]) * 100
+
+    # X = forward/back (negate: -X = forward in sensor frame → positive on plot)
+    h = -pos[:, 0] * 100
+    # Y = vertical
+    v = pos[:, 1] * 100
+
+    # Find turnaround (lowest vertical point = chest)
+    turn_idx = np.argmin(v) if np.min(v) < v[0] else np.argmax(v)
 
     group = f'rep{i+1}'
     fig.add_trace(go.Scatter(x=h, y=v, name=f'Rep {i+1}', mode='lines',
                               line=dict(width=2, color=color),
                               legendgroup=group, showlegend=True), row=3, col=1)
-    # Mark lockout (origin) and turnaround (bottom)
     if len(h) > 0:
         fig.add_trace(go.Scatter(x=[h[0]], y=[v[0]], mode='markers',
                                   marker=dict(size=7, color=color, symbol='circle'),
                                   name=f'Lockout {i+1}', legendgroup=group,
                                   showlegend=False), row=3, col=1)
-        # Mark the turnaround (chest) point
-        turn_idx = conc_start - full_start
-        if 0 < turn_idx < len(h):
+        if 0 < turn_idx < len(h) - 1:
             fig.add_trace(go.Scatter(x=[h[turn_idx]], y=[v[turn_idx]], mode='markers',
                                       marker=dict(size=7, color=color, symbol='diamond'),
                                       name=f'Chest {i+1}', legendgroup=group,
