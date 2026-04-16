@@ -1,3 +1,8 @@
+# === Session output files (no data) ===
+*.html
+*.csv
+*.png
+
 # === Data (large / subject-specific — do not commit) ===
 data/raw/
 data/processed/
