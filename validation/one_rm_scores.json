@@ -1,0 +1,146 @@
+{
+  "method": "B",
+  "per_lifter": [
+    {
+      "lifter": "D",
+      "expected_lb": [
+        305.0,
+        345.0
+      ],
+      "consensus_one_rm_lb": 305.760587840382,
+      "ci95": [
+        236.20913289063586,
+        351.4394564598026
+      ],
+      "method_used": "LVP-consensus",
+      "v1_within_10pct": true,
+      "v2_in_range": true,
+      "v3_ci_overlaps_range": true,
+      "v4_any_sub_in_range": true,
+      "passes_lifter": true,
+      "closest_sub_estimator": {
+        "name": "MPV-LVP (best-per-set)",
+        "one_rm_lb": 319.06715535787947,
+        "r2": 0.7876614493817304
+      },
+      "sub_estimators": [
+        {
+          "name": "MPV-LVP (best-per-set)",
+          "one_rm_lb": 319.06715535787947,
+          "r2": 0.7876614493817304,
+          "valid": 1.0,
+          "notes": "MVT=0.17 m/s"
+        },
+        {
+          "name": "MCV-LVP (best-per-set)",
+          "one_rm_lb": 313.46753109356507,
+          "r2": 0.8793244633740296,
+          "valid": 1.0,
+          "notes": "MVT=0.15 m/s"
+        },
+        {
+          "name": "MPV-LVP (mean top-2)",
+          "one_rm_lb": 287.84569523500903,
+          "r2": 0.9633311445200176,
+          "valid": 1.0,
+          "notes": "MVT=0.17 m/s  (rep-1 setup noise reduced)"
+        },
+        {
+          "name": "GB-pop (best@heaviest)",
+          "one_rm_lb": 244.11279896469594,
+          "r2": NaN,
+          "valid": true,
+          "notes": "heaviest=185lb  best MPV=0.529  \u2192 75.8% 1RM"
+        },
+        {
+          "name": "VL-within-set",
+          "one_rm_lb": 224.24242424242425,
+          "r2": NaN,
+          "valid": true,
+          "notes": "VL=18%  \u2192  ~4 RIR  \u2192  reps_eq=7  \u2192  82% 1RM"
+        },
+        {
+          "name": "MPV-LVP (trimmed)",
+          "one_rm_lb": 287.72196053004524,
+          "r2": 0.9841202540814702,
+          "valid": true,
+          "notes": "dropped 175lb (leave-one-out best R\u00b2=0.98)  MVT=0.17 m/s"
+        }
+      ],
+      "notes": ""
+    },
+    {
+      "lifter": "M",
+      "expected_lb": [
+        250.0,
+        300.0
+      ],
+      "consensus_one_rm_lb": 298.7341328333506,
+      "ci95": [
+        228.0708260657798,
+        326.12930262496445
+      ],
+      "method_used": "LVP-consensus+trimmed",
+      "v1_within_10pct": true,
+      "v2_in_range": true,
+      "v3_ci_overlaps_range": true,
+      "v4_any_sub_in_range": true,
+      "passes_lifter": true,
+      "closest_sub_estimator": {
+        "name": "MPV-LVP (trimmed)",
+        "one_rm_lb": 298.7341328333506,
+        "r2": 0.8999951978943175
+      },
+      "sub_estimators": [
+        {
+          "name": "MPV-LVP (best-per-set)",
+          "one_rm_lb": 458.96491076403265,
+          "r2": 0.3906984350384123,
+          "valid": false,
+          "notes": "MVT=0.17 m/s"
+        },
+        {
+          "name": "MCV-LVP (best-per-set)",
+          "one_rm_lb": 5974.443335966302,
+          "r2": 0.0010177640824801104,
+          "valid": false,
+          "notes": "MVT=0.15 m/s"
+        },
+        {
+          "name": "MPV-LVP (mean top-2)",
+          "one_rm_lb": 479.6177117883221,
+          "r2": 0.4186223579124059,
+          "valid": false,
+          "notes": "MVT=0.17 m/s  (rep-1 setup noise reduced)"
+        },
+        {
+          "name": "GB-pop (best@heaviest)",
+          "one_rm_lb": 231.96257196779626,
+          "r2": NaN,
+          "valid": true,
+          "notes": "heaviest=185lb  best MPV=0.468  \u2192 79.8% 1RM"
+        },
+        {
+          "name": "VL-within-set",
+          "one_rm_lb": 211.42857142857142,
+          "r2": NaN,
+          "valid": true,
+          "notes": "VL=25%  \u2192  ~2 RIR  \u2192  reps_eq=5  \u2192  88% 1RM"
+        },
+        {
+          "name": "MPV-LVP (trimmed)",
+          "one_rm_lb": 298.7341328333506,
+          "r2": 0.8999951978943175,
+          "valid": true,
+          "notes": "dropped 185lb (leave-one-out best R\u00b2=0.90)  MVT=0.17 m/s"
+        }
+      ],
+      "notes": "MPV-LVP ill-conditioned (likely submax efforts)"
+    }
+  ],
+  "aggregate": {
+    "a1_all_near_mid": true,
+    "a2_all_range_supported": true,
+    "overall_pass": true
+  }
+}
