@@ -1,3 +1,9 @@
+# === Session output files (no data) ===
+*.html
+*.csv
+*.png
+*.docx
+
 # === Data (large / subject-specific — do not commit) ===
 data/raw/
 data/processed/
@@ -36,6 +42,7 @@ desktop.ini
 .vscode/
 *.swp
 *.swo
+*.claude
 
 # === Secrets / credentials ===
 .env
