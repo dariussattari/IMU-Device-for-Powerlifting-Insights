@@ -52,33 +52,70 @@ function dayNum(iso: string): string {
   }
 }
 
+function hhmm(iso: string): string {
+  try {
+    const d = new Date(iso)
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+  } catch {
+    return "—"
+  }
+}
+
 interface DayGroup {
-  dayKey: string           // e.g. 2026-04-22
+  dayKey: string           // unique key per session batch, e.g. 2026-04-22@18:36
+  dateKey: string          // calendar date, e.g. 2026-04-22
   month: string            // APR
   num: string              // 22
+  time: string             // 18:36 — time-of-day of the batch start
   lifters: Set<string>
   entries: SessionInfo[]
 }
 
-function groupByDay(sessions: SessionInfo[]): DayGroup[] {
-  const buckets = new Map<string, DayGroup>()
-  for (const s of sessions) {
-    const key = dayOf(s.uploaded_at)
-    let g = buckets.get(key)
-    if (!g) {
-      g = {
-        dayKey: key,
+// Gap (in seconds) beyond which two adjacent uploads are treated as
+// different sessions. Sequential uploads in one "+ New session" batch
+// are seconds apart; real-world gym-time gaps between sessions are
+// minutes-to-hours.
+const BATCH_GAP_S = 120
+
+/**
+ * Group uploaded sessions into batches. Each "+ New session → Upload"
+ * click becomes one card, even if several batches happen on the same
+ * calendar day. Two sessions land in the same batch iff their
+ * uploaded_at timestamps are within BATCH_GAP_S of each other.
+ *
+ * The backend already returns sessions sorted uploaded_at DESC, but
+ * we sort ASC locally for the sliding-window pass, then flip the
+ * output so the newest batch appears first.
+ */
+function groupByBatch(sessions: SessionInfo[]): DayGroup[] {
+  if (sessions.length === 0) return []
+  const asc = [...sessions].sort((a, b) =>
+    a.uploaded_at < b.uploaded_at ? -1 : a.uploaded_at > b.uploaded_at ? 1 : 0
+  )
+  const batches: DayGroup[] = []
+  let current: DayGroup | null = null
+  let lastTs = -Infinity
+  for (const s of asc) {
+    const ts = new Date(s.uploaded_at).getTime()
+    const gapS = (ts - lastTs) / 1000
+    if (!current || gapS > BATCH_GAP_S) {
+      current = {
+        dayKey: `${dayOf(s.uploaded_at)}@${hhmm(s.uploaded_at)}`,
+        dateKey: dayOf(s.uploaded_at),
         month: monthShort(s.uploaded_at),
         num: dayNum(s.uploaded_at),
+        time: hhmm(s.uploaded_at),
         lifters: new Set(),
         entries: [],
       }
-      buckets.set(key, g)
+      batches.push(current)
     }
-    if (s.lifter) g.lifters.add(s.lifter)
-    g.entries.push(s)
+    if (s.lifter) current.lifters.add(s.lifter)
+    current.entries.push(s)
+    lastTs = ts
   }
-  return Array.from(buckets.values()).sort((a, b) => (a.dayKey < b.dayKey ? 1 : -1))
+  // newest batch first (matches the backend's DESC list order the user expects)
+  return batches.reverse()
 }
 
 export default function SessionsTab({
@@ -97,18 +134,21 @@ export default function SessionsTab({
   const [drag, setDrag] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  const days = useMemo(() => groupByDay(sessions), [sessions])
+  const days = useMemo(() => groupByBatch(sessions), [sessions])
 
-  // keep selectedDay in sync with selectedId, or default to first day
+  // keep selectedDay in sync with selectedId, or default to first batch
   useEffect(() => {
     if (!days.length) {
       setSelectedDay(null)
       return
     }
     if (selectedId) {
-      const s = sessions.find((x) => x.session_id === selectedId)
-      if (s) {
-        setSelectedDay(dayOf(s.uploaded_at))
+      // find the batch that actually contains the selected session
+      const hit = days.find((d) =>
+        d.entries.some((e) => e.session_id === selectedId)
+      )
+      if (hit) {
+        setSelectedDay(hit.dayKey)
         return
       }
     }
@@ -120,6 +160,14 @@ export default function SessionsTab({
   }, [mode, sessions.length])
 
   const activeDay = days.find((d) => d.dayKey === selectedDay) ?? null
+
+  // If multiple batches exist for a single calendar date, show the
+  // batch time in labels so they can be told apart.
+  const dateCounts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const d of days) m.set(d.dateKey, (m.get(d.dateKey) ?? 0) + 1)
+    return m
+  }, [days])
 
   function addFiles(files: File[]) {
     const csvs: Pending[] = files
@@ -188,7 +236,7 @@ export default function SessionsTab({
           <h2>Sessions &amp; sets</h2>
           <div className="sub">
             {sessions.length} {sessions.length === 1 ? "set" : "sets"} logged · {days.length}{" "}
-            {days.length === 1 ? "session day" : "session days"}
+            {days.length === 1 ? "session" : "sessions"}
           </div>
         </div>
         <button
@@ -203,10 +251,10 @@ export default function SessionsTab({
       </div>
 
       <div className="sess-layout">
-        {/* left · session dates */}
+        {/* left · sessions list */}
         <div className="panel date-list">
           <div className="panel-h">
-            <span className="tit">Session dates</span>
+            <span className="tit">Sessions</span>
             <span className="r">
               <span className="chip">{days.length} total</span>
             </span>
@@ -225,6 +273,7 @@ export default function SessionsTab({
                     }`
                   : `${d.entries.length} ${d.entries.length === 1 ? "set" : "sets"}`
               const first = d.entries[0]
+              const needsTime = (dateCounts.get(d.dateKey) ?? 0) > 1
               return (
                 <div
                   key={d.dayKey}
@@ -242,9 +291,15 @@ export default function SessionsTab({
                   <div className="body">
                     <div className="ttl">
                       {first?.lifter ? `Bench press · ${first.lifter}` : "Bench press"}
+                      {needsTime && (
+                        <span style={{ color: "var(--ink-600)", marginLeft: 8 }}>
+                          @ {d.time}
+                        </span>
+                      )}
                     </div>
                     <div className="meta">
-                      {d.dayKey} · {label}
+                      {d.dateKey}
+                      {needsTime && ` · ${d.time}`} · {label}
                     </div>
                   </div>
                   <div className="ct">
@@ -401,6 +456,11 @@ export default function SessionsTab({
             <div className="panel-h">
               <span className="tit">
                 Session · {activeDay.month} {activeDay.num}
+                {(dateCounts.get(activeDay.dateKey) ?? 0) > 1 && (
+                  <span style={{ color: "var(--ink-600)", marginLeft: 6 }}>
+                    @ {activeDay.time}
+                  </span>
+                )}
               </span>
               <span className="r">
                 <span className="chip live">
@@ -414,7 +474,15 @@ export default function SessionsTab({
               <div className="form-grid">
                 <div className="field">
                   <label>Date</label>
-                  <input type="text" readOnly value={activeDay.dayKey} />
+                  <input
+                    type="text"
+                    readOnly
+                    value={
+                      (dateCounts.get(activeDay.dateKey) ?? 0) > 1
+                        ? `${activeDay.dateKey} · ${activeDay.time}`
+                        : activeDay.dateKey
+                    }
+                  />
                 </div>
                 <div className="field">
                   <label>Lifter</label>
