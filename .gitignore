@@ -2,6 +2,7 @@
 *.html
 *.csv
 *.png
+*.docx
 
 # === Data (large / subject-specific — do not commit) ===
 data/raw/
@@ -41,6 +42,7 @@ desktop.ini
 .vscode/
 *.swp
 *.swo
+*.claude
 
 # === Secrets / credentials ===
 .env
