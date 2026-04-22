@@ -7,9 +7,14 @@ and saves it to timestamped .csv files.
 
 Usage:
     python3 capture_serial.py
-
-    Optional arguments:
     python3 capture_serial.py --port /dev/cu.usbmodem3101 --baud 115200 --output ./data
+    python3 capture_serial.py --reps 10          # enable keystroke annotation for 10 reps
+
+Annotation mode (--reps):
+    While recording, press Enter to mark positions in sequence:
+        lockout → chest → 1 → chest → 2 → chest → ... → chest → N → rack
+    Annotations are saved to a companion CSV: session_..._annotations.csv
+    with columns: timestamp_ms, label
 
 The script auto-detects the serial port on macOS. Press Ctrl+C to quit.
 """
@@ -19,6 +24,8 @@ import serial.tools.list_ports
 import argparse
 import os
 import sys
+import threading
+import time as time_mod
 from datetime import datetime
 
 
@@ -42,11 +49,72 @@ def find_esp32_port():
     return None
 
 
+def build_annotation_sequence(num_reps):
+    """
+    Build the ordered list of labels the user cycles through with Enter.
+
+    For a 10-rep set the sequence is:
+        lockout, chest, 1, chest, 2, chest, 3, ..., chest, 10, rack
+
+    'lockout'  = initial position at the top before rep 1
+    'chest'    = bar on chest (bottom of each rep)
+    '1'–'N'    = lockout at the top after the concentric phase
+    'rack'     = bar re-racked at the end
+    """
+    seq = ["lockout"]
+    for rep in range(1, num_reps + 1):
+        seq.append("chest")
+        seq.append(str(rep))
+    seq.append("rack")
+    return seq
+
+
+def annotation_listener(ann_state):
+    """
+    Background thread: blocks on input() waiting for Enter presses.
+    Each press records a timestamp and advances to the next label.
+    """
+    seq = ann_state["sequence"]
+    idx = 0
+
+    print(f"\n   [ANNOTATE] Press Enter to mark: {seq[idx]}")
+
+    while idx < len(seq) and ann_state["active"]:
+        try:
+            input()  # blocks until Enter
+        except EOFError:
+            break
+
+        if not ann_state["active"]:
+            break
+
+        # Compute ms elapsed since DATA_START (aligns with IMU timestamp_ms)
+        now = time_mod.perf_counter()
+        elapsed_ms = (now - ann_state["t0"]) * 1000.0
+
+        label = seq[idx]
+        ann_state["file"].write(f"{elapsed_ms:.1f},{label}\n")
+        ann_state["file"].flush()
+        ann_state["annotations"].append((elapsed_ms, label))
+
+        print(f"   [ANNOTATE] ✓ {label} @ {elapsed_ms/1000:.2f}s", end="")
+
+        idx += 1
+        if idx < len(seq):
+            print(f"  — next: {seq[idx]}")
+        else:
+            print("  — all positions marked!")
+
+    ann_state["active"] = False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Capture IMU data from ESP32-S3 over USB serial")
     parser.add_argument("--port", type=str, default=None, help="Serial port (auto-detected if omitted)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("--output", type=str, default=".", help="Output directory for CSV files (default: current dir)")
+    parser.add_argument("--reps", type=int, default=0,
+                        help="Number of reps — enables keystroke annotation mode (e.g. --reps 10)")
     args = parser.parse_args()
 
     # Find port
@@ -87,6 +155,8 @@ def main():
     csv_file = None
     sample_count = 0
     start_time = None
+    ann_state = None
+    ann_thread = None
 
     try:
         while True:
@@ -104,10 +174,40 @@ def main():
                 sample_count = 0
                 start_time = datetime.now()
                 print(f"\n>> RECORDING to {filename}")
+
+                # Start annotation thread if --reps was specified
+                if args.reps > 0:
+                    ann_filename = os.path.join(
+                        args.output, f"session_{timestamp}_annotations.csv"
+                    )
+                    ann_file = open(ann_filename, "w")
+                    ann_file.write("timestamp_ms,label\n")
+                    ann_file.flush()
+
+                    ann_state = {
+                        "sequence": build_annotation_sequence(args.reps),
+                        "t0": time_mod.perf_counter(),
+                        "file": ann_file,
+                        "annotations": [],
+                        "active": True,
+                    }
+                    ann_thread = threading.Thread(
+                        target=annotation_listener, args=(ann_state,), daemon=True
+                    )
+                    ann_thread.start()
+
                 continue
 
             # Detect end of data stream
             if line == "---DATA_STOP---":
+                # Stop annotation thread
+                if ann_state and ann_state["active"]:
+                    ann_state["active"] = False
+                    if ann_state["file"]:
+                        ann_state["file"].close()
+                    n_ann = len(ann_state["annotations"])
+                    print(f"   Annotations: {n_ann} positions marked")
+
                 if csv_file:
                     csv_file.close()
                     csv_file = None
@@ -116,6 +216,8 @@ def main():
                 if sample_count > 0 and duration > 0:
                     print(f"   Avg rate: {sample_count/duration:.1f} Hz")
                 print(f"   Saved to: {filename}")
+                if ann_state:
+                    print(f"   Annotations: {ann_filename}")
                 recording = False
                 continue
 
@@ -137,6 +239,14 @@ def main():
     except KeyboardInterrupt:
         pass  # Fall through to cleanup
     finally:
+        # Stop annotation thread
+        if ann_state and ann_state["active"]:
+            ann_state["active"] = False
+            try:
+                ann_state["file"].close()
+            except Exception:
+                pass
+
         # Wrap all cleanup so a second Ctrl+C can't break it
         try:
             print("\n\nSending STOP command...")
