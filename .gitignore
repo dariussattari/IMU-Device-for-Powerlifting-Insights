@@ -44,6 +44,14 @@ desktop.ini
 *.swo
 *.claude
 
+# === API runtime state ===
+api_storage/
+
+# === Frontend build artifacts ===
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
 # === Secrets / credentials ===
 .env
 *.pem
