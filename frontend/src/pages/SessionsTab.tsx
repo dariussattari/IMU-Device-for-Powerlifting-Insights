@@ -229,6 +229,30 @@ export default function SessionsTab({
     }
   }
 
+  async function handleDeleteBatch(batch: DayGroup) {
+    const n = batch.entries.length
+    const who = batch.entries[0]?.lifter
+    const tag = who ? `${who} · ${batch.dateKey}` : batch.dateKey
+    const confirmMsg = `Delete session (${tag}) and all ${n} ${n === 1 ? "set" : "sets"}?\nThis cannot be undone.`
+    if (!window.confirm(confirmMsg)) return
+    const failures: string[] = []
+    for (const e of batch.entries) {
+      try {
+        await deleteSession(e.session_id)
+      } catch (err) {
+        failures.push(
+          `${e.filename}: ${err instanceof ApiError ? err.message : String(err)}`
+        )
+      }
+    }
+    // if the currently selected set was inside this batch, clear selection
+    if (batch.entries.some((e) => e.session_id === selectedId)) {
+      onSelect(null)
+    }
+    if (failures.length) setError(failures.join("\n"))
+    await onRefresh()
+  }
+
   return (
     <section className="tabview">
       <div className="sess-head-row">
@@ -306,6 +330,17 @@ export default function SessionsTab({
                     <b>{d.entries.length}</b>{" "}
                     {d.entries.length === 1 ? "set" : "sets"}
                   </div>
+                  <button
+                    className="del-batch"
+                    title={`Delete this session and all ${d.entries.length} ${d.entries.length === 1 ? "set" : "sets"}`}
+                    aria-label="Delete session"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteBatch(d)
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               )
             })

@@ -382,7 +382,7 @@ body::after {
 
 .date-list { padding: 0; }
 .date-row {
-  display: grid; grid-template-columns: 64px 1fr auto; gap: 14px;
+  display: grid; grid-template-columns: 64px 1fr auto auto; gap: 14px;
   padding: 14px 18px; border-bottom: 1px solid var(--ink-300); align-items: center; cursor: pointer;
   transition: background .15s ease;
 }
@@ -396,6 +396,15 @@ body::after {
 .date-row .body .meta { font-family: var(--f-mono); font-size: 10px; color: var(--ink-700); margin-top: 3px; letter-spacing: .08em; }
 .date-row .ct { font-family: var(--f-mono); font-size: 11px; color: var(--ink-700); letter-spacing: .06em; text-align: right; }
 .date-row .ct b { color: var(--bone); }
+.date-row .del-batch {
+  background: transparent; border: 1px solid var(--ink-400); color: var(--ink-700);
+  width: 26px; height: 26px; border-radius: 2px;
+  font-family: var(--f-mono); font-size: 16px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity .15s ease, color .15s ease, border-color .15s ease;
+}
+.date-row:hover .del-batch, .date-row.on .del-batch, .date-row .del-batch:focus-visible { opacity: 1; }
+.date-row .del-batch:hover { color: var(--hot); border-color: var(--hot); }
 
 /* forms */
 .form-body { padding: 20px 22px; }
