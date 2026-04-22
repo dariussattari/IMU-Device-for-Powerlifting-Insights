@@ -403,7 +403,9 @@ export default function AnalysisTab({
           <div className="panel-h">
             <span className="tit">Bar path · sagittal</span>
             <span className="r">
-              <span className="chip">EKF</span>
+              <span className="chip" title="Schematic — 2D path reconstruction not yet implemented in the backend. The ROM, duration, and propulsive-fraction values below are real; the curve shape is a visual placeholder.">
+                schematic
+              </span>
               <span className="chip">{reps.length} reps</span>
             </span>
           </div>
@@ -411,11 +413,11 @@ export default function AnalysisTab({
             <div className="barpath-legend">
               <div className="row">
                 <span className="sw" style={{ background: "var(--sig)" }} />
-                <span>IMU · EKF</span>
+                <span>stylized loop</span>
               </div>
               <div className="row">
                 <span className="sw" style={{ background: "var(--hot)" }} />
-                <span>Sticking</span>
+                <span>sticking (demo)</span>
               </div>
             </div>
             <svg viewBox="0 0 520 360" preserveAspectRatio="xMidYMid meet">

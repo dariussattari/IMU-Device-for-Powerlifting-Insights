@@ -27,21 +27,22 @@ interface LvpPoint {
 }
 
 function LvpChart({
-  sessions,
   selectedId,
   estimators,
   consensusLb,
+  sessionSummaries,
 }: {
-  sessions: SessionInfo[]
   selectedId: string | null
   estimators: EstimatorOut[]
   consensusLb: number | null
+  sessionSummaries: OneRmResponse["sessions"] | undefined
 }) {
   // pick the LV-MPV linear estimator for the line
   const lvMpv = estimators.find((e) => e.name === "LV-MPV · linear" || e.name.includes("LV-MPV"))
   const points: LvpPoint[] = useMemo(() => {
     const pts: LvpPoint[] = []
-    if (lvMpv && lvMpv.x_points.length === lvMpv.y_points.length) {
+    // prefer real estimator points from the 1RM response
+    if (lvMpv && lvMpv.x_points.length === lvMpv.y_points.length && lvMpv.x_points.length > 0) {
       for (let i = 0; i < lvMpv.x_points.length; i++) {
         pts.push({
           load: lvMpv.x_points[i],
@@ -50,15 +51,23 @@ function LvpChart({
           isSelected: false,
         })
       }
-    } else {
-      // fallback from session info
-      for (const s of sessions) {
-        if (s.load_lb == null) continue
-        pts.push({ load: s.load_lb, mpv: 0.5, label: String(s.load_lb), isSelected: s.session_id === selectedId })
+      return pts
+    }
+    // fallback: use the per-session best_mpv returned by /api/one-rm
+    if (sessionSummaries && sessionSummaries.length > 0) {
+      for (const s of sessionSummaries) {
+        if (s.load_lb == null || s.best_mpv == null) continue
+        pts.push({
+          load: s.load_lb,
+          mpv: s.best_mpv,
+          label: String(s.load_lb),
+          isSelected: s.session_id === selectedId,
+        })
       }
     }
+    // if neither is available we render no points (the axes still draw)
     return pts
-  }, [lvMpv, sessions, selectedId])
+  }, [lvMpv, sessionSummaries, selectedId])
 
   const loads = points.map((p) => p.load).concat(consensusLb ? [consensusLb] : [])
   const minLoad = loads.length ? Math.min(...loads) * 0.9 : 100
@@ -539,10 +548,10 @@ export default function OneRmStickingTab({ sessions, selectedId, onJumpToSession
 
       <div className="row-3">
         <LvpChart
-          sessions={lifterSessions.filter((s) => picked.has(s.session_id))}
           selectedId={selectedId}
           estimators={oneRm?.estimators ?? []}
           consensusLb={consensusLb}
+          sessionSummaries={oneRm?.sessions}
         />
 
         <div className="panel one-rm">
