@@ -468,7 +468,8 @@ def _match_detected_to_annotated(det_boundaries, ann_reps, t: np.ndarray,
     return out
 
 
-def compute_metrics(csv_path: str, ann_path: str, method: str = "B",
+def compute_metrics(csv_path: str, ann_path: Optional[str] = None,
+                    method: str = "B",
                     snap: bool = True, use_detector: bool = True):
     """Run one method end-to-end. Returns dict with vy, metrics, diagnostics.
 
@@ -485,18 +486,38 @@ def compute_metrics(csv_path: str, ann_path: str, method: str = "B",
 
         use_detector=False, snap=False: raw annotation boundaries.
 
-    `snap` is ignored when use_detector=True."""
+    `snap` is ignored when use_detector=True.
+
+    `ann_path` is optional. When omitted, `use_detector` must be True and
+    `snap` must be False — rep numbers are assigned 1..N from the detector's
+    order, and the first rep has no eccentric phase (prev_li is None).
+    """
+    if ann_path is None:
+        if not use_detector:
+            raise ValueError("ann_path is required when use_detector=False")
+        if snap:
+            raise ValueError("snap=True requires ann_path")
+
     df = pd.read_csv(csv_path)
     t, ay_lin, gyro_mag, fs = prepare_signals(df)
-    anns = parse_annotations(ann_path)
-    raw_boundaries = reps_to_index_boundaries(t, anns["reps"])
+
+    if ann_path is not None:
+        anns = parse_annotations(ann_path)
+        raw_boundaries = reps_to_index_boundaries(t, anns["reps"])
+    else:
+        anns = {"initial_lockout_s": None, "reps": [], "rack_s": None}
+        raw_boundaries = []
 
     if use_detector:
         vy_seed = integrate_vy_A(t, ay_lin)
         det_pairs = _detector_boundaries(t, vy_seed, gyro_mag, fs)
-        matched = _match_detected_to_annotated(det_pairs, anns["reps"], t)
-        boundaries = [(ci, li) for ci, li, _ in matched]
-        rep_nums = [num for _, _, num in matched]
+        if ann_path is not None:
+            matched = _match_detected_to_annotated(det_pairs, anns["reps"], t)
+            boundaries = [(ci, li) for ci, li, _ in matched]
+            rep_nums = [num for _, _, num in matched]
+        else:
+            boundaries = [(ci, li) for ci, li in det_pairs]
+            rep_nums = list(range(1, len(boundaries) + 1))
     elif snap and method in ("B", "C", "D"):
         vy_seed = integrate_vy_A(t, ay_lin)
         boundaries = snap_boundaries_to_zero_crossings(t, vy_seed, raw_boundaries)
@@ -519,7 +540,6 @@ def compute_metrics(csv_path: str, ann_path: str, method: str = "B",
 
     reps_out: List[RepMetrics] = []
     prev_li = None
-    # Seed prev_li with initial-lockout index so first rep has a true eccentric
     if anns["initial_lockout_s"] is not None:
         prev_li = int(np.argmin(np.abs(t - anns["initial_lockout_s"])))
     for num, (ci, li) in zip(rep_nums, boundaries):

@@ -139,14 +139,34 @@ def _parse_session_name(name: str) -> Tuple[str, int, int]:
     return parts[0], int(parts[1]), int(parts[2])
 
 
-def extract_session_features(csv_path: str, ann_path: str,
+def extract_session_features(csv_path: str,
+                             ann_path: Optional[str] = None,
                              method: str = "B",
-                             name: Optional[str] = None) -> SessionFeatures:
+                             name: Optional[str] = None,
+                             lifter: Optional[str] = None,
+                             load_lb: Optional[int] = None,
+                             n_reps_prescribed: Optional[int] = None,
+                             ) -> SessionFeatures:
+    """Extract per-session features for 1RM estimation.
+
+    `lifter`, `load_lb`, and `n_reps_prescribed` override filename parsing
+    when supplied. When all three are omitted, the filename must follow
+    the `{lifter}_{load}_{reps}_session_*` convention. `ann_path` is
+    optional — the detector finds rep boundaries when omitted.
+    """
     result = compute_sticking(csv_path, ann_path, method=method)
     reps = result["reps"]
     sticking = result["sticking"]
     nm = name or os.path.basename(csv_path).replace(".csv", "")
-    lifter, load, n_rx = _parse_session_name(nm)
+
+    if lifter is None or load_lb is None or n_reps_prescribed is None:
+        parsed_lifter, parsed_load, parsed_n_rx = _parse_session_name(nm)
+        lifter = lifter if lifter is not None else parsed_lifter
+        load_lb = load_lb if load_lb is not None else parsed_load
+        n_reps_prescribed = (n_reps_prescribed if n_reps_prescribed is not None
+                             else parsed_n_rx)
+    load = int(load_lb)
+    n_rx = int(n_reps_prescribed)
 
     mpv = [float(r.mpv) for r in reps]
     mcv = [float(r.mcv) for r in reps]

@@ -166,11 +166,15 @@ def _no_sticking(c_v, c_t, pcv: Optional[float] = None,
     }
 
 
-def compute_sticking(csv_path: str, ann_path: str, method: str = "B"):
+def compute_sticking(csv_path: str, ann_path: Optional[str] = None,
+                     method: str = "B"):
     """Run the velocity pipeline + sticking-point extraction for one session.
 
     Returns the upstream velocity result dict extended with a `sticking`
     list — one StickingPoint per kept rep, aligned 1:1 with result['reps'].
+
+    `ann_path` is optional; when omitted, the detector provides rep
+    boundaries and rep numbers are assigned 1..N.
     """
     result = compute_metrics(csv_path, ann_path, method=method, use_detector=True)
     t = result["t"]
