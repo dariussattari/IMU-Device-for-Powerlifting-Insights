@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { analyzeSession, ApiError } from "@/api/client"
-import type { AnalyzeResponse, Method, RepMetrics, SessionInfo } from "@/api/types"
+import type { AnalyzeResponse, PlotData, Method, RepMetrics, SessionInfo } from "@/api/types"
 import { fmt, fmtInt } from "@/lib/format"
 import VyReadout from "@/components/VyReadout"
 
@@ -11,12 +11,57 @@ interface Props {
   onJumpToSessions: () => void
 }
 
+// Method labels reflect what the backend actually computes in
+// src/velocity/velocity_metrics.py. Method D is not an EKF.
 const METHOD_LEGEND: { m: Method; label: React.ReactNode }[] = [
-  { m: "A", label: <>Raw a<sub>y</sub> · single integration.</> },
-  { m: "B", label: <>High-pass a<sub>y</sub> + zero-vel update.</> },
-  { m: "C", label: <>Gravity-comp · rep-segmented.</> },
-  { m: "D", label: <>EKF accel+gyro fusion. <i>Default.</i></> },
+  { m: "A", label: <>Raw a<sub>y</sub> · trapezoid integration.</> },
+  { m: "B", label: <>ZUPT-only drift correction.</> },
+  { m: "C", label: <>ZUPT + per-rep endpoint detrend.</> },
+  { m: "D", label: <>0.1 Hz HP-accel + ZUPT + endpoint detrend. <i>Default.</i></> },
 ]
+
+/**
+ * Build an SVG path string for a per-rep vy(t) slice.
+ * Plots the actual velocity samples between `chest_s` and `top_s` from
+ * plot_data. Returns null if there aren't enough samples in the window.
+ */
+function buildRepSparkPath(
+  plot: PlotData,
+  chest_s: number,
+  top_s: number,
+  width = 120,
+  height = 28,
+  pad = 2,
+): string | null {
+  const t = plot.t
+  const vy = plot.vy
+  if (!t.length || !vy.length || top_s <= chest_s) return null
+  // binary-ish linear scan; t is sorted ascending
+  let i0 = 0
+  while (i0 < t.length && t[i0] < chest_s) i0++
+  let i1 = i0
+  while (i1 < t.length && t[i1] <= top_s) i1++
+  if (i1 - i0 < 3) return null
+  const seg = vy.slice(i0, i1)
+  const tseg = t.slice(i0, i1)
+  const vMin = Math.min(...seg)
+  const vMax = Math.max(...seg)
+  const vRange = vMax - vMin || 1
+  const tMin = tseg[0]
+  const tMax = tseg[tseg.length - 1]
+  const tRange = tMax - tMin || 1
+  const innerW = width - pad * 2
+  const innerH = height - pad * 2
+  // downsample to ≤40 plotted points to keep SVG light
+  const stride = Math.max(1, Math.floor(seg.length / 40))
+  const pts: string[] = []
+  for (let i = 0; i < seg.length; i += stride) {
+    const x = pad + ((tseg[i] - tMin) / tRange) * innerW
+    const y = pad + innerH - ((seg[i] - vMin) / vRange) * innerH
+    pts.push(`${x.toFixed(1)},${y.toFixed(1)}`)
+  }
+  return `M${pts.join(" L")}`
+}
 
 function VelocityLossSummary({
   reps,
@@ -30,6 +75,29 @@ function VelocityLossSummary({
   const last = mpvs.length ? mpvs[mpvs.length - 1] : null
   const vl = best && last ? (last - best) / best : null
   const avg = mpvs.length ? mpvs.reduce((a, b) => a + b, 0) / mpvs.length : null
+
+  // Build the per-rep MPV trend path from actual data.
+  const trendPath = useMemo(() => {
+    if (mpvs.length < 2) return null
+    const width = 120
+    const height = 28
+    const pad = 2
+    const vMin = Math.min(...mpvs)
+    const vMax = Math.max(...mpvs)
+    const vRange = vMax - vMin || 1
+    const innerW = width - pad * 2
+    const innerH = height - pad * 2
+    return (
+      "M" +
+      mpvs
+        .map((v, i) => {
+          const x = pad + (i / (mpvs.length - 1)) * innerW
+          const y = pad + innerH - ((v - vMin) / vRange) * innerH
+          return `${x.toFixed(1)},${y.toFixed(1)}`
+        })
+        .join(" L")
+    )
+  }, [mpvs])
 
   return (
     <div
@@ -50,12 +118,9 @@ function VelocityLossSummary({
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        <path
-          d="M0,4 L24,6 L48,8 L72,14 L96,20 L120,24"
-          fill="none"
-          stroke="var(--bone)"
-          strokeWidth={1.5}
-        />
+        {trendPath && (
+          <path d={trendPath} fill="none" stroke="var(--bone)" strokeWidth={1.5} />
+        )}
       </svg>
       <div className="row">
         <span>VL</span>
@@ -154,9 +219,10 @@ export default function AnalysisTab({
   const peakCV = bestRep?.pcv ?? null
   const mpvs = reps.map((r) => r.mpv).filter((v): v is number => v != null)
   const vl = mpvs.length >= 2 ? (mpvs[mpvs.length - 1] - Math.max(...mpvs)) / Math.max(...mpvs) : null
-  const repCountConf = reps.length
-    ? reps.filter((r) => r.mpv != null && r.pcv != null).length / reps.length
-    : 0
+  // Sticking-flagged rate: fraction of detected reps where the velocity
+  // pipeline identified a true valley (drive peak → dip → recovery).
+  // This is a real backend output — see src/sticking_point/sticking_point.py.
+  const stickingRate = reps.length ? stickingCount / reps.length : 0
 
   // session timestamp formatting
   const ts = selected.uploaded_at
@@ -298,14 +364,25 @@ export default function AnalysisTab({
           </div>
 
           <div className="panel">
-            <div className="k">Rep-count confidence</div>
-            <div className="v">{repCountConf.toFixed(2)}</div>
-            <div className="delta">
-              {reps.length} of {reps.length} reps pass filters
-              {stickingCount > 0 && ` · ${stickingCount} flagged`}
+            <div className="k">Sticking-flagged reps</div>
+            <div className="v">
+              {stickingCount}
+              <span className="u">/ {reps.length || "—"}</span>
+            </div>
+            <div className={`delta ${stickingRate > 0.5 ? "down" : ""}`}>
+              {reps.length === 0
+                ? "waiting"
+                : stickingCount === 0
+                ? "no distinct valley after drive"
+                : `${(stickingRate * 100).toFixed(0)}% with post-drive valley`}
             </div>
             <div className="bar">
-              <i style={{ width: `${Math.round(repCountConf * 100)}%` }} />
+              <i
+                style={{
+                  width: `${Math.round(stickingRate * 100)}%`,
+                  background: stickingRate > 0.5 ? "var(--hot)" : "var(--sig)",
+                }}
+              />
             </div>
           </div>
         </div>
@@ -340,6 +417,9 @@ export default function AnalysisTab({
               {reps.slice(0, 5).map((r, i) => {
                 const nextChest = reps[i + 1]?.chest_s ?? null
                 const flagged = flaggedRepNums.has(r.num)
+                const sparkD = analysis
+                  ? buildRepSparkPath(analysis.plot_data, r.chest_s, r.top_s)
+                  : null
                 return (
                   <div
                     key={r.num}
@@ -358,12 +438,14 @@ export default function AnalysisTab({
                       viewBox="0 0 120 28"
                       preserveAspectRatio="none"
                     >
-                      <path
-                        d={`M0,22 L15,24 L30,26 L45,${20 - (r.mpv ?? 0) * 8} L60,${14 - (r.pcv ?? 0) * 10} L75,${10 - (r.pcv ?? 0) * 10} L90,${18 - (r.mpv ?? 0) * 8} L105,22 L120,24`}
-                        fill="none"
-                        stroke="var(--sig)"
-                        strokeWidth={r.num === bestNum ? 2 : 1.5}
-                      />
+                      {sparkD && (
+                        <path
+                          d={sparkD}
+                          fill="none"
+                          stroke="var(--sig)"
+                          strokeWidth={r.num === bestNum ? 2 : 1.5}
+                        />
+                      )}
                     </svg>
                     <div className="row">
                       <span>peak</span>
@@ -398,13 +480,16 @@ export default function AnalysisTab({
           )}
         </div>
 
-        {/* bar path */}
+        {/* bar path — 2D reconstruction pending backend EKF output */}
         <div className="panel barpath">
           <div className="panel-h">
             <span className="tit">Bar path · sagittal</span>
             <span className="r">
-              <span className="chip" title="Schematic — 2D path reconstruction not yet implemented in the backend. The ROM, duration, and propulsive-fraction values below are real; the curve shape is a visual placeholder.">
-                schematic
+              <span
+                className="chip"
+                title="2D path reconstruction requires integrating accelerometer + gyro into world-frame position. Not yet implemented in the Python backend — firmware emits raw IMU only. The ROM / duration / propulsive-fraction values below come from the 1D velocity pipeline and are real."
+              >
+                in development
               </span>
               <span className="chip">{reps.length} reps</span>
             </span>
@@ -412,15 +497,12 @@ export default function AnalysisTab({
           <div className="barpath-viz">
             <div className="barpath-legend">
               <div className="row">
-                <span className="sw" style={{ background: "var(--sig)" }} />
-                <span>stylized loop</span>
-              </div>
-              <div className="row">
-                <span className="sw" style={{ background: "var(--hot)" }} />
-                <span>sticking (demo)</span>
+                <span className="sw" style={{ background: "var(--ink-600)" }} />
+                <span>plot area (pending EKF)</span>
               </div>
             </div>
             <svg viewBox="0 0 520 360" preserveAspectRatio="xMidYMid meet">
+              {/* structural grid kept so the real plot will drop in unchanged */}
               <g stroke="#161b23" strokeWidth="1">
                 <line x1="0" y1="60" x2="520" y2="60" />
                 <line x1="0" y1="120" x2="520" y2="120" />
@@ -433,43 +515,62 @@ export default function AnalysisTab({
                 <line x1="320" y1="0" x2="320" y2="360" />
                 <line x1="400" y1="0" x2="400" y2="360" />
               </g>
-              <line x1="260" y1="0" x2="260" y2="360" stroke="#2a323f" strokeDasharray="1 6" />
-              {/* decorative rep paths — swept from rep count */}
-              <g fill="none" stroke="var(--sig)" strokeWidth="1.6">
-                {Array.from({ length: Math.min(5, reps.length) }).map((_, i) => {
-                  const opacity = i === (bestNum ? bestNum - 1 : 0) ? 1 : 0.5
-                  const strokeWidth = i === (bestNum ? bestNum - 1 : 0) ? 2.4 : 1.6
-                  const shift = i * 3
-                  return (
+
+              {/*
+                PLUG-IN POINT. When the backend adds per-rep 2D path data
+                (e.g. plot_data.path_x[], plot_data.path_y[] or a dedicated
+                /api/sessions/:id/path endpoint), replace the placeholder
+                block below with a map over rep paths:
+
+                  rep_paths.map((rep, i) => (
                     <path
-                      key={`path-${i}`}
-                      d={`M ${260 - shift},${108 + i * 2} C ${244},${162 + i * 2} ${244},${224 + i * 2} ${260 - shift * 0.5},${272 + i * 2} C ${276},${222 + i * 2} ${278},${160 + i * 2} ${266 - shift},${110 + i * 2}`}
-                      opacity={opacity}
-                      strokeWidth={strokeWidth}
+                      key={rep.num}
+                      d={buildPath2D(rep.x_cm, rep.y_cm)}
+                      stroke="var(--sig)"
+                      strokeWidth={rep.num === bestNum ? 2.4 : 1.6}
+                      opacity={rep.num === bestNum ? 1 : 0.5}
+                      fill="none"
                     />
-                  )
-                })}
+                  ))
+
+                The grid above + footer below don't need to change.
+              */}
+              <g transform="translate(260 180)" fontFamily="JetBrains Mono, monospace">
+                <text
+                  x="0"
+                  y="-18"
+                  textAnchor="middle"
+                  fontSize="11"
+                  fill="var(--hot)"
+                  letterSpacing="1.6"
+                >
+                  2D PATH RECONSTRUCTION
+                </text>
+                <text
+                  x="0"
+                  y="4"
+                  textAnchor="middle"
+                  fontSize="11"
+                  fill="var(--hot)"
+                  letterSpacing="1.6"
+                >
+                  STILL IN DEVELOPMENT
+                </text>
+                <text
+                  x="0"
+                  y="28"
+                  textAnchor="middle"
+                  fontSize="9"
+                  fill="var(--ink-600)"
+                  letterSpacing="1.2"
+                >
+                  awaiting EKF position output from backend
+                </text>
               </g>
-              {/* sticking indicator ring (shown only if any reps flagged) */}
-              {stickingCount > 0 && (
-                <g>
-                  <circle cx="252" cy="208" r="16" fill="none" stroke="var(--hot)" strokeWidth="1" opacity=".6" />
-                  <circle cx="252" cy="208" r="5" fill="var(--hot)" />
-                </g>
-              )}
+
               <g fontFamily="JetBrains Mono, monospace" fontSize="10" fill="#5a6678" letterSpacing="1.4">
                 <text x="10" y="14">Y (cm)</text>
-                <text x="10" y="64">+40</text>
-                <text x="10" y="184">&nbsp; 0</text>
-                <text x="10" y="304">-40</text>
                 <text x="470" y="344">X (cm)</text>
-                <text x="256" y="344" fill="#8892a4">0</text>
-              </g>
-              <g fontFamily="JetBrains Mono, monospace" fontSize="10" fill="#b6bcc7">
-                <circle cx="260" cy="108" r="3" fill="var(--sig)" />
-                <text x="268" y="104">LOCKOUT</text>
-                <circle cx="258" cy="276" r="3" fill="var(--sig)" />
-                <text x="266" y="280">CHEST</text>
               </g>
             </svg>
           </div>

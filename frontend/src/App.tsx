@@ -88,8 +88,9 @@ export default function App() {
           IMU <span className="a">Lab</span>
         </h1>
         <div className="sub">
-          Open-source barbell-mounted IMU platform for rep counting, 3D bar-path reconstruction,
-          velocity profiling, and 1RM prediction across the squat, bench press, and deadlift.
+          Open-source barbell-mounted IMU platform for rep counting, velocity profiling,
+          sticking-point detection, and load-velocity 1RM prediction. Current scope: bench press.
+          Squat, deadlift, and 2D bar-path reconstruction are in development.
         </div>
       </div>
 
@@ -142,10 +143,10 @@ export default function App() {
       <div className="footer">
         <span className="logo">IMU · LAB</span>
         <span>
-          Sattari · Mahin &nbsp;·&nbsp; open dataset &nbsp;·&nbsp; squat · bench · deadlift
+          Sattari · Mahin &nbsp;·&nbsp; open dataset &nbsp;·&nbsp; bench (squat · deadlift WIP)
           &nbsp;·&nbsp; <span style={{ color: "var(--sig)" }}>●</span> build {new Date().getFullYear()}
         </span>
-        <span>LSM6DSOX / ESP32-S3 / EKF</span>
+        <span>LSM6DSOX / ESP32-S3</span>
       </div>
     </div>
   )

@@ -8,6 +8,7 @@ import type {
   AnalyzeResponse,
   EstimatorOut,
   OneRmResponse,
+  PlotData,
   SessionInfo,
   StickingPoint,
 } from "@/api/types"
@@ -37,8 +38,15 @@ function LvpChart({
   consensusLb: number | null
   sessionSummaries: OneRmResponse["sessions"] | undefined
 }) {
-  // pick the LV-MPV linear estimator for the line
-  const lvMpv = estimators.find((e) => e.name === "LV-MPV · linear" || e.name.includes("LV-MPV"))
+  // Pick the MPV-LVP estimator for the regression line + fit points.
+  // Prefer the trimmed version (the one that drives consensus in
+  // src/one_rm/one_rm.py), then any MPV-LVP, then anything with "MPV"
+  // in the name. Falls back to null → we plot only per-session points.
+  const lvMpv =
+    estimators.find((e) => e.name.includes("MPV-LVP (trimmed)") && e.valid) ??
+    estimators.find((e) => e.name.includes("MPV-LVP") && e.valid) ??
+    estimators.find((e) => e.name.includes("MPV-LVP")) ??
+    null
   const points: LvpPoint[] = useMemo(() => {
     const pts: LvpPoint[] = []
     // prefer real estimator points from the 1RM response
@@ -202,13 +210,69 @@ function LvpChart({
   )
 }
 
+/**
+ * Build a real vy(t) SVG path for one rep, normalized to the
+ * stick-viz coordinate system (viewBox 0..320 x 0..180).
+ * Returns the stroke path + fill polygon + the x coord of the
+ * detected sticking point so the overlay aligns with the real curve.
+ */
+function buildStickingCurve(
+  plot: PlotData,
+  chest_s: number,
+  top_s: number,
+  sp_t: number | null,
+): { strokeD: string; fillD: string; spX: number | null } | null {
+  const t = plot.t
+  const vy = plot.vy
+  if (!t.length || !vy.length || top_s <= chest_s) return null
+  let i0 = 0
+  while (i0 < t.length && t[i0] < chest_s) i0++
+  let i1 = i0
+  while (i1 < t.length && t[i1] <= top_s) i1++
+  if (i1 - i0 < 4) return null
+  const seg = vy.slice(i0, i1)
+  const tseg = t.slice(i0, i1)
+  const vMin = Math.min(...seg)
+  const vMax = Math.max(...seg)
+  const vRange = vMax - vMin || 1
+  const tMin = tseg[0]
+  const tMax = tseg[tseg.length - 1]
+  const tRange = tMax - tMin || 1
+  // viewBox: 0..320 wide, 0..180 tall; leave 10px top margin, 20px bottom
+  const W = 320
+  const Htop = 10
+  const Hbot = 160 // vy draws inside 10..160 band
+  const toX = (tt: number) => ((tt - tMin) / tRange) * W
+  const toY = (vv: number) => Htop + (1 - (vv - vMin) / vRange) * (Hbot - Htop)
+  // downsample to ≤80 plot points
+  const stride = Math.max(1, Math.floor(seg.length / 80))
+  const pts: [number, number][] = []
+  for (let i = 0; i < seg.length; i += stride) {
+    pts.push([toX(tseg[i]), toY(seg[i])])
+  }
+  // ensure last point is included
+  const last = seg.length - 1
+  if (pts[pts.length - 1]?.[0] !== toX(tseg[last])) {
+    pts.push([toX(tseg[last]), toY(seg[last])])
+  }
+  const strokeD =
+    "M" + pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" L")
+  const fillD =
+    strokeD +
+    ` L${pts[pts.length - 1][0].toFixed(1)},180 L${pts[0][0].toFixed(1)},180 Z`
+  const spX =
+    sp_t != null && sp_t >= tMin && sp_t <= tMax ? toX(sp_t) : null
+  return { strokeD, fillD, spX }
+}
+
 function StickingPanel({
-  stickingResult,
+  analysis,
   loading,
 }: {
-  stickingResult: StickingPoint[]
+  analysis: AnalyzeResponse | null
   loading: boolean
 }) {
+  const stickingResult: StickingPoint[] = analysis?.sticking ?? []
   const flagged = stickingResult.filter((s) => s.has_sticking)
   const meanFrac = flagged.length
     ? flagged.reduce((a, b) => a + (b.sp_frac ?? 0), 0) / flagged.length
@@ -216,6 +280,29 @@ function StickingPanel({
 
   const phase: "bottom" | "middle" | "top" =
     meanFrac == null ? "middle" : meanFrac < 0.33 ? "bottom" : meanFrac < 0.66 ? "middle" : "top"
+
+  // Pick the rep to draw. Prefer the deepest flagged sticking rep so the
+  // valley is visible; fall back to the first rep so the panel still
+  // shows a real vy curve even on clean sets.
+  const repToDraw: StickingPoint | null = useMemo(() => {
+    if (flagged.length > 0) {
+      return flagged.reduce((best, s) =>
+        s.sp_depth > (best?.sp_depth ?? -Infinity) ? s : best,
+        flagged[0],
+      )
+    }
+    return stickingResult[0] ?? null
+  }, [flagged, stickingResult])
+
+  const curve = useMemo(() => {
+    if (!analysis || !repToDraw) return null
+    return buildStickingCurve(
+      analysis.plot_data,
+      repToDraw.chest_s,
+      repToDraw.top_s,
+      repToDraw.sp_t,
+    )
+  }, [analysis, repToDraw])
 
   return (
     <div className="panel">
@@ -258,67 +345,87 @@ function StickingPanel({
           {/* phase bands */}
           <rect x="0" y="0" width="106" height="180" fill="rgba(90,102,120,.05)" />
           <rect x="213" y="0" width="107" height="180" fill="rgba(90,102,120,.05)" />
-          {/* velocity curve approximating rising → dip → peak → settle */}
-          <path
-            d="M0,180 L0,150 C 20,140 50,108 80,84 C 100,70 110,78 125,106 C 138,130 152,134 170,108 C 190,80 210,52 240,40 C 270,30 300,34 320,40 L320,180 Z"
-            fill="url(#stkFill)"
-          />
-          <path
-            d="M0,150 C 20,140 50,108 80,84 C 100,70 110,78 125,106 C 138,130 152,134 170,108 C 190,80 210,52 240,40 C 270,30 300,34 320,40"
-            fill="none"
-            stroke="var(--sig)"
-            strokeWidth="1.8"
-          />
-          {/* sticking highlight if flagged */}
-          {flagged.length > 0 && meanFrac != null && (
+
+          {/* Real vy(t) curve for the selected rep (deepest sticking if any,
+              else first rep). Built from analysis.plot_data.vy sliced
+              between chest_s and top_s. */}
+          {curve ? (
             <>
-              {(() => {
-                const cx = meanFrac * 320
-                const w = 40
-                return (
-                  <>
-                    <rect x={cx - w / 2} y="0" width={w} height="180" fill="oklch(0.78 0.18 55 / .16)" />
-                    <line
-                      x1={cx - w / 2}
-                      y1="0"
-                      x2={cx - w / 2}
-                      y2="180"
-                      stroke="var(--hot)"
-                      strokeDasharray="2 3"
-                      opacity="0.7"
-                    />
-                    <line
-                      x1={cx + w / 2}
-                      y1="0"
-                      x2={cx + w / 2}
-                      y2="180"
-                      stroke="var(--hot)"
-                      strokeDasharray="2 3"
-                      opacity="0.7"
-                    />
-                    <text
-                      x={cx - 14}
-                      y="20"
-                      fontFamily="JetBrains Mono, monospace"
-                      fontSize="10"
-                      fill="oklch(0.78 0.18 55)"
-                      letterSpacing="1.4"
-                    >
-                      STICK
-                    </text>
-                  </>
-                )
-              })()}
+              <path d={curve.fillD} fill="url(#stkFill)" />
+              <path
+                d={curve.strokeD}
+                fill="none"
+                stroke="var(--sig)"
+                strokeWidth="1.8"
+              />
+              {/* Real sticking marker at the detected sp_t of the drawn rep */}
+              {curve.spX != null && (
+                <>
+                  <line
+                    x1={curve.spX}
+                    y1="0"
+                    x2={curve.spX}
+                    y2="180"
+                    stroke="var(--hot)"
+                    strokeDasharray="2 3"
+                    opacity="0.7"
+                  />
+                  <text
+                    x={curve.spX - 14}
+                    y="20"
+                    fontFamily="JetBrains Mono, monospace"
+                    fontSize="10"
+                    fill="oklch(0.78 0.18 55)"
+                    letterSpacing="1.4"
+                  >
+                    STICK
+                  </text>
+                </>
+              )}
             </>
+          ) : (
+            <g
+              transform="translate(160 90)"
+              fontFamily="JetBrains Mono, monospace"
+            >
+              <text
+                x="0"
+                y="0"
+                textAnchor="middle"
+                fontSize="10"
+                fill="var(--ink-600)"
+                letterSpacing="1.2"
+              >
+                {loading ? "analyzing…" : "select a session to view vy(t)"}
+              </text>
+            </g>
           )}
+
           <g fontFamily="JetBrains Mono, monospace" fontSize="9" fill="#5a6678" letterSpacing="1.4">
             <text x="6" y="172" fill={phase === "bottom" ? "var(--hot)" : undefined}>BOTTOM</text>
             <text x="130" y="172" fill={phase === "middle" ? "var(--hot)" : undefined}>MIDDLE</text>
             <text x="270" y="172" fill={phase === "top" ? "var(--hot)" : undefined}>TOP</text>
             <text x="2" y="12">Vy</text>
-            <text x="295" y="12">ROM</text>
+            <text x="295" y="12">t · concentric</text>
           </g>
         </svg>
+        {repToDraw && (
+          <div
+            style={{
+              fontFamily: "var(--f-mono)",
+              fontSize: 10,
+              color: "var(--ink-600)",
+              letterSpacing: ".1em",
+              marginTop: 6,
+              textAlign: "center",
+            }}
+          >
+            showing rep {repToDraw.num} ·{" "}
+            {repToDraw.has_sticking
+              ? `sp @ ${(repToDraw.sp_frac! * 100).toFixed(0)}% · Δv ${((repToDraw.sp_rel_depth ?? 0) * 100).toFixed(0)}%`
+              : "no sticking detected"}
+          </div>
+        )}
       </div>
 
       <div className="stick-list">
@@ -479,11 +586,12 @@ export default function OneRmStickingTab({ sessions, selectedId, onJumpToSession
   const ci = oneRm?.ci95 ?? [null, null]
   const methodUsed = oneRm?.method_used ?? "D"
   const kg = consensusLb != null ? (consensusLb * 0.453592).toFixed(1) : null
-  const lvMpv = oneRm?.estimators.find((e) => e.name.includes("LV-MPV"))
+  const lvMpv =
+    oneRm?.estimators.find((e) => e.name.includes("MPV-LVP (trimmed)") && e.valid) ??
+    oneRm?.estimators.find((e) => e.name.includes("MPV-LVP") && e.valid) ??
+    oneRm?.estimators.find((e) => e.name.includes("MPV-LVP"))
   const r2 = lvMpv?.r2 ?? null
   const mvt = lvMpv?.mvt ?? null
-
-  const sticking = stickingAnalysis?.sticking ?? []
 
   return (
     <section className="tabview">
@@ -602,7 +710,7 @@ export default function OneRmStickingTab({ sessions, selectedId, onJumpToSession
           </div>
         </div>
 
-        <StickingPanel stickingResult={sticking} loading={loadingStick} />
+        <StickingPanel analysis={stickingAnalysis} loading={loadingStick} />
       </div>
 
       {/* session selector */}
