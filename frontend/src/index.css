@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* ═══════════════════ IMU LAB — industrial dashboard tokens ═══════════════════ */
+/* ═══════════════════ BARBELL LAB — industrial dashboard tokens ═══════════════════ */
 :root {
   --ink-000: #05070a;
   --ink-050: #0a0d12;
@@ -109,6 +109,13 @@ body::after {
 .topbar .left { display: flex; align-items: center; gap: 10px; }
 .topbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--sig); box-shadow: 0 0 10px var(--sig-glow); animation: pulse 1.8s infinite; }
 .topbar .brandword { color: var(--bone); letter-spacing: .28em; }
+
+/* barbell glyphs — shared marks */
+.bb-glyph { width: 30px; height: 10px; display: block; flex-shrink: 0; }
+.bb-logo {
+  width: 200px; height: 54px; display: block; flex-shrink: 0;
+  filter: drop-shadow(0 0 10px rgba(180, 255, 120, 0.12));
+}
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
 .topbar .right { color: var(--ink-700); }
 .topbar .right b { color: var(--ink-900); font-weight: 500; }
@@ -117,8 +124,10 @@ body::after {
 .masthead { padding: 26px 0 22px; border-bottom: 1px solid var(--ink-300); }
 .masthead h1 {
   font-family: var(--f-display); font-weight: 400; font-size: 44px; line-height: 1;
-  letter-spacing: -.025em; color: var(--bone);
+  letter-spacing: -.025em; color: var(--bone); margin: 0;
 }
+.masthead h1.brand-h1 { display: flex; align-items: center; gap: 18px; }
+.masthead h1 .brand-word { display: inline-flex; align-items: baseline; gap: 0.22em; }
 .masthead h1 .a { color: var(--sig); font-style: italic; font-family: var(--f-serif); font-weight: 400; }
 .masthead .sub {
   margin-top: 10px; max-width: 760px;
@@ -470,7 +479,10 @@ body::after {
   display: flex; justify-content: space-between; align-items: center;
   font-family: var(--f-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-600);
 }
-.footer .logo { color: var(--bone); font-family: var(--f-display); font-size: 12px; letter-spacing: .24em; }
+.footer .logo {
+  color: var(--bone); font-family: var(--f-display); font-size: 12px; letter-spacing: .24em;
+  display: inline-flex; align-items: center; gap: 10px;
+}
 
 /* ───────── loading / empty ───────── */
 .loading { display: flex; align-items: center; justify-content: center; padding: 40px 0; color: var(--ink-600); font-family: var(--f-mono); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; }

@@ -15,6 +15,131 @@ const TAB_LABELS: { key: TabKey; n: string; label: string }[] = [
   { key: "research", n: "04", label: "Research hypotheses" },
 ]
 
+/**
+ * Barbell icon, side view. Steel plates on the left (bone color),
+ * signal-lime "data-loaded" plate on the right with telemetry ticks —
+ * a visual pun: one side is raw iron, the other is what the platform
+ * turns it into (velocity / 1RM / sticking output).
+ *
+ * Size via the wrapping element's font-size or explicit width/height.
+ * Passes aria-hidden — the adjacent wordmark carries the label.
+ */
+function BarbellMark({ className = "bb-logo" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 180 48"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      aria-hidden="true"
+    >
+      {/* Outer plate (45 lb silhouette) — left, bone */}
+      <rect
+        x="2"
+        y="3"
+        width="11"
+        height="42"
+        rx="1"
+        fill="#0d1117"
+        stroke="var(--bone)"
+        strokeWidth="1.4"
+      />
+      {/* Inner plate (25 lb silhouette) — left, bone */}
+      <rect
+        x="17"
+        y="11"
+        width="7"
+        height="26"
+        rx="1"
+        fill="#0d1117"
+        stroke="var(--bone)"
+        strokeWidth="1.1"
+      />
+      {/* Collar — left */}
+      <rect x="26" y="20" width="3" height="8" fill="var(--bone)" />
+
+      {/* Bar shaft */}
+      <rect x="29" y="23" width="122" height="2" fill="var(--bone)" />
+
+      {/* Knurled grip marks in the middle of the bar */}
+      <g stroke="var(--bone)" strokeWidth="0.7" opacity="0.55">
+        <line x1="70" y1="20" x2="70" y2="28" />
+        <line x1="76" y1="20" x2="76" y2="28" />
+        <line x1="82" y1="20" x2="82" y2="28" />
+        <line x1="88" y1="20" x2="88" y2="28" />
+        <line x1="94" y1="20" x2="94" y2="28" />
+        <line x1="100" y1="20" x2="100" y2="28" />
+        <line x1="106" y1="20" x2="106" y2="28" />
+      </g>
+
+      {/* Collar — right */}
+      <rect x="151" y="20" width="3" height="8" fill="var(--sig)" />
+
+      {/* Inner plate — right, lime */}
+      <rect
+        x="156"
+        y="11"
+        width="7"
+        height="26"
+        rx="1"
+        fill="#0d1117"
+        stroke="var(--sig)"
+        strokeWidth="1.1"
+      />
+      {/* Outer plate — right, lime, "data-loaded" */}
+      <rect
+        x="167"
+        y="3"
+        width="11"
+        height="42"
+        rx="1"
+        fill="#0d1117"
+        stroke="var(--sig)"
+        strokeWidth="1.4"
+      />
+      {/* Subtle fill glow on the loaded plate */}
+      <rect
+        x="169"
+        y="13"
+        width="7"
+        height="22"
+        fill="var(--sig)"
+        opacity="0.16"
+      />
+      {/* Telemetry ticks on the outer loaded plate */}
+      <g stroke="var(--sig)" strokeWidth="0.9">
+        <line x1="169" y1="16" x2="176" y2="16" />
+        <line x1="169" y1="20" x2="176" y2="20" />
+        <line x1="169" y1="24" x2="176" y2="24" />
+        <line x1="169" y1="28" x2="176" y2="28" />
+        <line x1="169" y1="32" x2="176" y2="32" />
+      </g>
+    </svg>
+  )
+}
+
+/**
+ * Compact wordmark version — just the bar + two plates. Used inside
+ * the mono topbar/footer where the full icon would be too busy.
+ */
+function BarbellGlyph({ className = "bb-glyph" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 36 12"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect x="0" y="2" width="3" height="8" fill="var(--bone)" />
+      <rect x="4" y="4" width="2" height="4" fill="var(--bone)" />
+      <rect x="6" y="5" width="24" height="2" fill="var(--bone)" />
+      <rect x="30" y="4" width="2" height="4" fill="var(--sig)" />
+      <rect x="33" y="2" width="3" height="8" fill="var(--sig)" />
+    </svg>
+  )
+}
+
 export default function App() {
   const [tab, setTab] = useState<TabKey>(() => {
     try {
@@ -75,7 +200,8 @@ export default function App() {
       <div className="topbar">
         <div className="left">
           <span className="dot" />
-          <span className="brandword">IMU · LAB</span>
+          <BarbellGlyph />
+          <span className="brandword">BARBELL · LAB</span>
         </div>
         <div className="right">
           {nowIso} &nbsp;·&nbsp; Op · <b>D. Sattari</b>
@@ -84,8 +210,11 @@ export default function App() {
 
       {/* masthead */}
       <div className="masthead">
-        <h1>
-          IMU <span className="a">Lab</span>
+        <h1 className="brand-h1">
+          <BarbellMark />
+          <span className="brand-word">
+            Barbell <span className="a">Lab</span>
+          </span>
         </h1>
         <div className="sub">
           Open-source barbell-mounted IMU platform for rep counting, velocity profiling,
@@ -141,7 +270,10 @@ export default function App() {
 
       {/* footer */}
       <div className="footer">
-        <span className="logo">IMU · LAB</span>
+        <span className="logo">
+          <BarbellGlyph />
+          BARBELL · LAB
+        </span>
         <span>
           Sattari · Mahin &nbsp;·&nbsp; open dataset &nbsp;·&nbsp; bench (squat · deadlift WIP)
           &nbsp;·&nbsp; <span style={{ color: "var(--sig)" }}>●</span> build {new Date().getFullYear()}

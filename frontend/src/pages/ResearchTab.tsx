@@ -57,7 +57,7 @@ export default function ResearchTab() {
           </div>
           <div className="contact-body">
             <div className="name">Darius Sattari</div>
-            <div className="aff">IMU Lab · Harvard SEAS</div>
+            <div className="aff">Barbell Lab · Harvard SEAS</div>
             <a className="mail" href="mailto:dariussattari@g.harvard.edu">
               dariussattari@g.harvard.edu
             </a>
