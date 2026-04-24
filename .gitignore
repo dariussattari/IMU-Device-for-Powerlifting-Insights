@@ -1,7 +1,10 @@
 # === Session output files (no data) ===
 *.html
+!frontend/**/*.html
 *.csv
 *.png
+!frontend/public/*.png
+*.docx
 
 # === Data (large / subject-specific — do not commit) ===
 data/raw/
@@ -41,6 +44,18 @@ desktop.ini
 .vscode/
 *.swp
 *.swo
+*.claude
+!.claude/
+.claude/*
+!.claude/launch.json
+
+# === API runtime state ===
+api_storage/
+
+# === Frontend build artifacts ===
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 
 # === Secrets / credentials ===
 .env
