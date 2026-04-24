@@ -1,6 +1,7 @@
 import type {
   AnalyzeRequest,
   AnalyzeResponse,
+  BarPathResponse,
   OneRmRequest,
   OneRmResponse,
   SessionInfo,
@@ -89,4 +90,11 @@ export async function computeOneRm(body: OneRmRequest): Promise<OneRmResponse> {
     }),
   })
   return jsonOrThrow<OneRmResponse>(res)
+}
+
+export async function getBarPath(session_id: string): Promise<BarPathResponse> {
+  const res = await fetch(`/api/sessions/${session_id}/bar-path`, {
+    method: "POST",
+  })
+  return jsonOrThrow<BarPathResponse>(res)
 }

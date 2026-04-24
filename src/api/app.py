@@ -1,7 +1,8 @@
 """FastAPI app for IMU analysis.
 
-Exposes upload, analyze, and 1RM endpoints backed by the existing
-analysis modules in src/{rep_counting,velocity,sticking_point,one_rm}.
+Exposes upload, analyze, 1RM, and bar-path endpoints backed by the
+existing analysis modules in src/{rep_counting,velocity,sticking_point,
+one_rm,bar_path}.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..bar_path.routes import router as bar_path_router
 from .routes import analyze, one_rm, sessions
 
 app = FastAPI(
@@ -35,6 +37,7 @@ app.add_middleware(
 app.include_router(sessions.router)
 app.include_router(analyze.router)
 app.include_router(one_rm.router)
+app.include_router(bar_path_router)
 
 
 @app.get("/api/health")

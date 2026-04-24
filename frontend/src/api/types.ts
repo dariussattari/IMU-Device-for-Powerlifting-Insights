@@ -124,3 +124,35 @@ export interface OneRmRequest {
   session_ids: string[]
   method?: Method
 }
+
+// ── Bar-path reconstruction ─────────────────────────────────────────
+// Mirrors src/bar_path/models.py on main. One rep per entry, each with
+// a fixed-length (120) time/x/y/z position trace in metres. Coordinate
+// convention: z_m vertical (up positive), x_m forward/back (pseudo-
+// sagittal — stable within a session), y_m lateral.
+export interface BarPathRep {
+  num: number
+  start_s: number
+  chest_s: number
+  lockout_s: number
+  end_s: number
+  duration_s: number
+  t_s: number[]
+  x_m: number[]
+  y_m: number[]
+  z_m: number[]
+  chest_idx: number
+  lockout_idx: number
+  rom_m: number
+  peak_x_dev_m: number
+  peak_y_dev_m: number
+}
+
+export interface BarPathResponse {
+  session_id: string
+  fs_hz: number
+  duration_s: number
+  n_reps: number
+  reps: BarPathRep[]
+  notes: string
+}
