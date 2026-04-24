@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react"
-import { analyzeSession, ApiError } from "@/api/client"
-import type { AnalyzeResponse, Method, RepMetrics, SessionInfo } from "@/api/types"
+import { analyzeSession, ApiError, getBarPath } from "@/api/client"
+import type {
+  AnalyzeResponse,
+  BarPathResponse,
+  Method,
+  RepMetrics,
+  SessionInfo,
+} from "@/api/types"
 import { fmt, fmtInt } from "@/lib/format"
 import VyReadout from "@/components/VyReadout"
 
@@ -83,6 +89,7 @@ export default function AnalysisTab({
 }: Props) {
   const [method, setMethod] = useState<Method>("D")
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null)
+  const [barPath, setBarPath] = useState<BarPathResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -96,6 +103,7 @@ export default function AnalysisTab({
     async function run() {
       if (!selectedId) {
         setAnalysis(null)
+        setBarPath(null)
         return
       }
       setLoading(true)
@@ -117,6 +125,29 @@ export default function AnalysisTab({
       cancelled = true
     }
   }, [selectedId, method])
+
+  // Bar-path reconstruction is independent of the velocity method and
+  // runs once per selected session. Failures here are non-fatal: the
+  // panel falls back to the ROM/duration metrics computed by analyze.
+  useEffect(() => {
+    let cancelled = false
+    async function run() {
+      if (!selectedId) {
+        setBarPath(null)
+        return
+      }
+      try {
+        const res = await getBarPath(selectedId)
+        if (!cancelled) setBarPath(res)
+      } catch {
+        if (!cancelled) setBarPath(null)
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedId])
 
   if (!selected) {
     return (
@@ -403,21 +434,27 @@ export default function AnalysisTab({
           <div className="panel-h">
             <span className="tit">Bar path · sagittal</span>
             <span className="r">
-              <span className="chip" title="Schematic — 2D path reconstruction not yet implemented in the backend. The ROM, duration, and propulsive-fraction values below are real; the curve shape is a visual placeholder.">
-                schematic
-              </span>
-              <span className="chip">{reps.length} reps</span>
+              {barPath ? (
+                <span className="chip live" title="Reconstructed from IMU linear acceleration with per-rep endpoint-anchored integration.">
+                  reconstructed
+                </span>
+              ) : (
+                <span className="chip" title="Bar-path reconstruction unavailable for this session.">
+                  unavailable
+                </span>
+              )}
+              <span className="chip">{barPath?.n_reps ?? reps.length} reps</span>
             </span>
           </div>
           <div className="barpath-viz">
             <div className="barpath-legend">
               <div className="row">
                 <span className="sw" style={{ background: "var(--sig)" }} />
-                <span>stylized loop</span>
+                <span>best rep</span>
               </div>
               <div className="row">
-                <span className="sw" style={{ background: "var(--hot)" }} />
-                <span>sticking (demo)</span>
+                <span className="sw" style={{ background: "var(--bone)", opacity: 0.5 }} />
+                <span>other reps</span>
               </div>
             </div>
             <svg viewBox="0 0 520 360" preserveAspectRatio="xMidYMid meet">
@@ -434,42 +471,82 @@ export default function AnalysisTab({
                 <line x1="400" y1="0" x2="400" y2="360" />
               </g>
               <line x1="260" y1="0" x2="260" y2="360" stroke="#2a323f" strokeDasharray="1 6" />
-              {/* decorative rep paths — swept from rep count */}
-              <g fill="none" stroke="var(--sig)" strokeWidth="1.6">
-                {Array.from({ length: Math.min(5, reps.length) }).map((_, i) => {
-                  const opacity = i === (bestNum ? bestNum - 1 : 0) ? 1 : 0.5
-                  const strokeWidth = i === (bestNum ? bestNum - 1 : 0) ? 2.4 : 1.6
-                  const shift = i * 3
-                  return (
-                    <path
-                      key={`path-${i}`}
-                      d={`M ${260 - shift},${108 + i * 2} C ${244},${162 + i * 2} ${244},${224 + i * 2} ${260 - shift * 0.5},${272 + i * 2} C ${276},${222 + i * 2} ${278},${160 + i * 2} ${266 - shift},${110 + i * 2}`}
-                      opacity={opacity}
-                      strokeWidth={strokeWidth}
-                    />
-                  )
-                })}
-              </g>
-              {/* sticking indicator ring (shown only if any reps flagged) */}
-              {stickingCount > 0 && (
-                <g>
-                  <circle cx="252" cy="208" r="16" fill="none" stroke="var(--hot)" strokeWidth="1" opacity=".6" />
-                  <circle cx="252" cy="208" r="5" fill="var(--hot)" />
-                </g>
+              {/* real per-rep bar paths. Axes:
+                    svg_y = 120 − z_cm · 3   (z=0 at top, z=−40 mid)
+                    svg_x = 260 + x_cm · 8   (x=0 centered)                  */}
+              {barPath && barPath.reps.length > 0 && (() => {
+                const PX_PER_CM_Y = 3
+                const PX_PER_CM_X = 8
+                const ORIG_Y = 120
+                const ORIG_X = 260
+                const toPath = (xs: number[], zs: number[]) =>
+                  xs
+                    .map((xm, i) => {
+                      const X = ORIG_X + xm * 100 * PX_PER_CM_X
+                      const Y = ORIG_Y - zs[i] * 100 * PX_PER_CM_Y
+                      return `${i === 0 ? "M" : "L"} ${X.toFixed(1)},${Y.toFixed(1)}`
+                    })
+                    .join(" ")
+                const bestBp = bestNum
+                  ? barPath.reps.find((r) => r.num === bestNum) ?? null
+                  : null
+                return (
+                  <>
+                    <g fill="none" stroke="var(--bone)" strokeWidth={1.3} opacity={0.45}>
+                      {barPath.reps
+                        .filter((r) => !bestBp || r.num !== bestBp.num)
+                        .slice(0, 8)
+                        .map((r) => (
+                          <path key={`bp-${r.num}`} d={toPath(r.x_m, r.z_m)} />
+                        ))}
+                    </g>
+                    {bestBp && (
+                      <g fill="none" stroke="var(--sig)" strokeWidth={2.4}>
+                        <path d={toPath(bestBp.x_m, bestBp.z_m)} />
+                        <circle
+                          cx={ORIG_X + bestBp.x_m[0] * 100 * PX_PER_CM_X}
+                          cy={ORIG_Y - bestBp.z_m[0] * 100 * PX_PER_CM_Y}
+                          r={3}
+                          fill="var(--sig)"
+                        />
+                        <circle
+                          cx={
+                            ORIG_X +
+                            bestBp.x_m[bestBp.chest_idx] * 100 * PX_PER_CM_X
+                          }
+                          cy={
+                            ORIG_Y -
+                            bestBp.z_m[bestBp.chest_idx] * 100 * PX_PER_CM_Y
+                          }
+                          r={3}
+                          fill="var(--sig)"
+                        />
+                      </g>
+                    )}
+                  </>
+                )
+              })()}
+              {!barPath && (
+                <text
+                  x={260}
+                  y={184}
+                  textAnchor="middle"
+                  fontFamily="JetBrains Mono, monospace"
+                  fontSize={11}
+                  fill="#5a6678"
+                >
+                  bar-path reconstruction unavailable
+                </text>
               )}
               <g fontFamily="JetBrains Mono, monospace" fontSize="10" fill="#5a6678" letterSpacing="1.4">
                 <text x="10" y="14">Y (cm)</text>
-                <text x="10" y="64">+40</text>
-                <text x="10" y="184">&nbsp; 0</text>
-                <text x="10" y="304">-40</text>
+                <text x="10" y="64">+20</text>
+                <text x="10" y="124">&nbsp; 0</text>
+                <text x="10" y="184">-20</text>
+                <text x="10" y="244">-40</text>
+                <text x="10" y="304">-60</text>
                 <text x="470" y="344">X (cm)</text>
                 <text x="256" y="344" fill="#8892a4">0</text>
-              </g>
-              <g fontFamily="JetBrains Mono, monospace" fontSize="10" fill="#b6bcc7">
-                <circle cx="260" cy="108" r="3" fill="var(--sig)" />
-                <text x="268" y="104">LOCKOUT</text>
-                <circle cx="258" cy="276" r="3" fill="var(--sig)" />
-                <text x="266" y="280">CHEST</text>
               </g>
             </svg>
           </div>
@@ -477,12 +554,28 @@ export default function AnalysisTab({
             <div>
               <div className="k">ROM</div>
               <div className="v">
-                {bestRep?.rom_m != null ? (bestRep.rom_m * 100).toFixed(1) : "—"} cm
+                {(() => {
+                  const bestBp = barPath && bestNum
+                    ? barPath.reps.find((r) => r.num === bestNum)
+                    : null
+                  const rom_m = bestBp?.rom_m ?? bestRep?.rom_m ?? null
+                  return rom_m != null ? (rom_m * 100).toFixed(1) : "—"
+                })()}{" "}
+                cm
               </div>
             </div>
             <div>
-              <div className="k">Concentric dur.</div>
-              <div className="v">{fmt(bestRep?.duration_s, 2)} s</div>
+              <div className="k">Forward drift</div>
+              <div className="v">
+                {(() => {
+                  const bestBp = barPath && bestNum
+                    ? barPath.reps.find((r) => r.num === bestNum)
+                    : null
+                  return bestBp?.peak_x_dev_m != null
+                    ? `${(bestBp.peak_x_dev_m * 100).toFixed(1)} cm`
+                    : "—"
+                })()}
+              </div>
             </div>
             <div>
               <div className="k">Propulsive frac.</div>
