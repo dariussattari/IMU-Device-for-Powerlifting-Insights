@@ -176,7 +176,10 @@ def compute_sticking(csv_path: str, ann_path: Optional[str] = None,
     `ann_path` is optional; when omitted, the detector provides rep
     boundaries and rep numbers are assigned 1..N.
     """
-    result = compute_metrics(csv_path, ann_path, method=method, use_detector=True)
+    result = compute_metrics(
+        csv_path, ann_path, method=method, use_detector=True,
+        snap=(ann_path is not None),
+    )
     t = result["t"]
     vy = result["vy"]
     out: List[StickingPoint] = []

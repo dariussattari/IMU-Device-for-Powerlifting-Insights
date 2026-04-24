@@ -1,7 +1,9 @@
 # === Session output files (no data) ===
 *.html
+!frontend/**/*.html
 *.csv
 *.png
+!frontend/public/*.png
 *.docx
 
 # === Data (large / subject-specific — do not commit) ===
@@ -43,6 +45,9 @@ desktop.ini
 *.swp
 *.swo
 *.claude
+!.claude/
+.claude/*
+!.claude/launch.json
 
 # === API runtime state ===
 api_storage/

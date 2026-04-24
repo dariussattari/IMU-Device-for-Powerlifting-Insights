@@ -121,6 +121,24 @@ python -m src.velocity.profile --input data/processed/
 python -m src.one_rm.predict --input data/processed/
 ```
 
+### Web UI + API
+
+Two processes, two ports. FastAPI serves the analysis endpoints; Vite runs the React frontend and proxies `/api/*` through.
+
+```bash
+# Terminal 1 — analysis API (port 8000)
+uvicorn src.api.app:app --reload --port 8000
+
+# Terminal 2 — UI dev server (port 5173, on the `ui` branch)
+cd frontend
+npm install
+npm run dev
+```
+
+Open <http://localhost:5173>. Drag-drop a bench-press CSV (with an optional annotations CSV), enter load and lifter, then open the session for velocity metrics + sticking-point detection, or select two or more sessions and run the 1RM consensus.
+
+For a production-style single-process serve, run `npm run build` and FastAPI will mount `frontend/dist/` at `/`.
+
 ## Validation Approach
 
 Ground truth is captured via **OpenCap** (smartphone-based markerless motion capture, validated to within 2–10° of marker-based systems). IMU-derived bar paths and velocities are compared against OpenCap trajectories using RMSE, Pearson correlation, and Bland-Altman analysis.

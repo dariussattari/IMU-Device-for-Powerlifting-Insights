@@ -33,11 +33,11 @@ def one_rm(req: OneRmRequest) -> OneRmResponse:
         if r is None:
             raise HTTPException(status_code=404,
                                 detail=f"session not found: {sid}")
-        if r.lifter is None or r.load_lb is None or r.n_reps_prescribed is None:
+        if r.lifter is None or r.load_lb is None:
             raise HTTPException(
                 status_code=400,
-                detail=(f"session {sid} is missing lifter/load_lb/"
-                        f"n_reps_prescribed (required for 1RM)"),
+                detail=(f"session {sid} is missing lifter or load_lb "
+                        f"(required for 1RM)"),
             )
         records.append(r)
 
@@ -57,7 +57,9 @@ def one_rm(req: OneRmRequest) -> OneRmResponse:
                 name=r.filename.replace(".csv", ""),
                 lifter=r.lifter,
                 load_lb=r.load_lb,
-                n_reps_prescribed=r.n_reps_prescribed,
+                # optional — downstream estimators don't use this value;
+                # fall back to 0 so the dataclass int-cast succeeds.
+                n_reps_prescribed=r.n_reps_prescribed or 0,
             )
             for r in records
         ]
