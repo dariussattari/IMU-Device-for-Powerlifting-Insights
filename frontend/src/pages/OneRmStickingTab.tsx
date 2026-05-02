@@ -268,9 +268,11 @@ function buildStickingCurve(
 function StickingPanel({
   analysis,
   loading,
+  sourceLabel,
 }: {
   analysis: AnalyzeResponse | null
   loading: boolean
+  sourceLabel?: string | null
 }) {
   const stickingResult: StickingPoint[] = analysis?.sticking ?? []
   const flagged = stickingResult.filter((s) => s.has_sticking)
@@ -309,6 +311,7 @@ function StickingPanel({
       <div className="panel-h">
         <span className="tit">Sticking region</span>
         <span className="r">
+          {sourceLabel && <span className="chip">{sourceLabel}</span>}
           {flagged.length > 0 ? (
             <span className="chip warn">detected ×{flagged.length}</span>
           ) : (
@@ -479,7 +482,11 @@ export default function OneRmStickingTab({ sessions, selectedId, onJumpToSession
   // pick sessions belonging to the same lifter as selected, default all
   const [picked, setPicked] = useState<Set<string>>(() => new Set())
   const [oneRm, setOneRm] = useState<OneRmResponse | null>(null)
-  const [stickingAnalysis, setStickingAnalysis] = useState<AnalyzeResponse | null>(null)
+  // Sticking analyses are cached per session_id so flipping chips doesn't
+  // refetch sets we've already analyzed.
+  const [stickingCache, setStickingCache] = useState<Map<string, AnalyzeResponse>>(
+    () => new Map()
+  )
   const [loading, setLoading] = useState(false)
   const [loadingStick, setLoadingStick] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -509,7 +516,11 @@ export default function OneRmStickingTab({ sessions, selectedId, onJumpToSession
     setPicked(next)
   }, [lifterSessions])
 
-  const canRun = picked.size >= 2
+  // ≥2 picked → linear LVP. =1 picked → fall back to single-session
+  // estimators (González-Badillo population eq + within-set velocity-loss);
+  // both are computed by the backend regardless of session count.
+  const canRun = picked.size >= 1
+  const singleSession = picked.size === 1
 
   useEffect(() => {
     let cancelled = false
@@ -538,43 +549,85 @@ export default function OneRmStickingTab({ sessions, selectedId, onJumpToSession
     }
   }, [picked, canRun])
 
-  // fetch sticking analysis for the currently selected session
+  // Fetch sticking analyses for every picked set (only the ones not in the
+  // cache yet). The chosen analysis is then derived from the cache + picked
+  // set in the memo below.
   useEffect(() => {
-    let cancelled = false
-    async function run() {
-      if (!selectedId) {
-        setStickingAnalysis(null)
-        return
-      }
-      setLoadingStick(true)
-      try {
-        const res = await analyzeSession(selectedId, {
-          method: "D",
-          include: ["sticking"],
-        })
-        if (!cancelled) setStickingAnalysis(res)
-      } catch (e) {
-        if (!cancelled) setError(e instanceof ApiError ? e.message : String(e))
-      } finally {
-        if (!cancelled) setLoadingStick(false)
-      }
+    const ids = Array.from(picked)
+    const missing = ids.filter((id) => !stickingCache.has(id))
+    if (missing.length === 0) {
+      setLoadingStick(false)
+      return
     }
-    run()
+    let cancelled = false
+    setLoadingStick(true)
+    Promise.all(
+      missing.map((id) =>
+        analyzeSession(id, { method: "D", include: ["sticking"] }).catch(
+          () => null
+        )
+      )
+    ).then((results) => {
+      if (cancelled) return
+      setStickingCache((prev) => {
+        const next = new Map(prev)
+        missing.forEach((id, i) => {
+          const r = results[i]
+          if (r) next.set(id, r)
+        })
+        return next
+      })
+      setLoadingStick(false)
+    })
     return () => {
       cancelled = true
     }
-  }, [selectedId])
+  }, [picked, stickingCache])
 
-  if (sessions.length < 2) {
+  // Pick the analysis to render. With one set picked, just show that one.
+  // With multiple, show the set with the deepest sticking point (greatest
+  // sp_depth across flagged reps); fall back to the first picked when none
+  // are flagged.
+  const stickingAnalysis = useMemo<AnalyzeResponse | null>(() => {
+    const candidates = Array.from(picked)
+      .map((id) => stickingCache.get(id))
+      .filter((a): a is AnalyzeResponse => a != null)
+    if (candidates.length === 0) return null
+    if (candidates.length === 1) return candidates[0]
+    let best = candidates[0]
+    let bestDepth = -Infinity
+    for (const a of candidates) {
+      const flagged = (a.sticking ?? []).filter((s) => s.has_sticking)
+      if (flagged.length === 0) continue
+      const d = Math.max(...flagged.map((f) => f.sp_depth))
+      if (d > bestDepth) {
+        bestDepth = d
+        best = a
+      }
+    }
+    return best
+  }, [picked, stickingCache])
+
+  const stickingSourceLabel = useMemo(() => {
+    if (!stickingAnalysis) return null
+    const src = sessions.find(
+      (s) => s.session_id === stickingAnalysis.session_id
+    )
+    if (!src) return null
+    const loadLbl = src.load_lb != null ? `${src.load_lb} lb` : "—"
+    return picked.size > 1 ? `${loadLbl} · most prominent` : loadLbl
+  }, [stickingAnalysis, sessions, picked])
+
+  if (sessions.length < 1) {
     return (
       <section className="tabview">
         <div className="panel" style={{ padding: "48px 40px" }}>
           <div className="empty">
-            Need at least 2 sessions with different loads to run a load–velocity profile.
+            Upload at least one session to project a 1RM.
           </div>
           <div style={{ textAlign: "center", marginTop: 16 }}>
             <button className="btn" onClick={onJumpToSessions}>
-              Upload more
+              Upload session
             </button>
           </div>
         </div>
@@ -647,7 +700,8 @@ export default function OneRmStickingTab({ sessions, selectedId, onJumpToSession
             }}
           >
             {picked.size} of {lifterSessions.length} sets included
-            {!canRun && " · select 2+ to run"}
+            {!canRun && " · select a set to run"}
+            {singleSession && " · single-set fallback (pop+VL)"}
           </div>
         </div>
       )}
@@ -705,12 +759,16 @@ export default function OneRmStickingTab({ sessions, selectedId, onJumpToSession
                 </div>
               ))
             ) : (
-              <div className="loading">{loading ? "computing…" : "need 2+ loads"}</div>
+              <div className="loading">{loading ? "computing…" : "select a set"}</div>
             )}
           </div>
         </div>
 
-        <StickingPanel analysis={stickingAnalysis} loading={loadingStick} />
+        <StickingPanel
+          analysis={stickingAnalysis}
+          loading={loadingStick}
+          sourceLabel={stickingSourceLabel}
+        />
       </div>
 
       {/* session selector */}

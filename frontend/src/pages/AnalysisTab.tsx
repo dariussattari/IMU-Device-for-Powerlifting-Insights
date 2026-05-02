@@ -90,6 +90,8 @@ export default function AnalysisTab({
   const [method, setMethod] = useState<Method>("D")
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null)
   const [barPath, setBarPath] = useState<BarPathResponse | null>(null)
+  const [selectedBarRep, setSelectedBarRep] = useState<number | "all">("all")
+  const [techniqueMode, setTechniqueMode] = useState<"ellipse" | "j">("ellipse")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -138,7 +140,10 @@ export default function AnalysisTab({
       }
       try {
         const res = await getBarPath(selectedId)
-        if (!cancelled) setBarPath(res)
+        if (!cancelled) {
+          setBarPath(res)
+          setSelectedBarRep("all")
+        }
       } catch {
         if (!cancelled) setBarPath(null)
       }
@@ -368,7 +373,7 @@ export default function AnalysisTab({
             <div className="empty">no reps in analysis response</div>
           ) : (
             <div className="grid">
-              {reps.slice(0, 5).map((r, i) => {
+              {reps.map((r, i) => {
                 const nextChest = reps[i + 1]?.chest_s ?? null
                 const flagged = flaggedRepNums.has(r.num)
                 return (
@@ -414,9 +419,9 @@ export default function AnalysisTab({
                   </div>
                 )
               })}
-              {reps.length > 0 && <VelocityLossSummary reps={reps} bestNum={bestNum} />}
-              {/* fill to 6 cells to keep grid borders clean */}
-              {Array.from({ length: Math.max(0, 5 - Math.min(reps.length, 5)) }).map(
+              <VelocityLossSummary reps={reps} bestNum={bestNum} />
+              {/* fill to a complete row of 6 to keep grid borders clean */}
+              {Array.from({ length: (6 - ((reps.length + 1) % 6)) % 6 }).map(
                 (_, i) => (
                   <div key={`fill-${i}`} className="rep" style={{ opacity: 0.2 }}>
                     <div className="num">
@@ -444,88 +449,279 @@ export default function AnalysisTab({
                 </span>
               )}
               <span className="chip">{barPath?.n_reps ?? reps.length} reps</span>
+              {barPath && barPath.reps.length > 0 && (
+                <select
+                  className="bp-rep-select"
+                  value={selectedBarRep === "all" ? "all" : String(selectedBarRep)}
+                  onChange={(e) =>
+                    setSelectedBarRep(
+                      e.target.value === "all" ? "all" : Number(e.target.value)
+                    )
+                  }
+                  aria-label="Select rep to display"
+                >
+                  <option value="all">all reps</option>
+                  {barPath.reps.map((r) => (
+                    <option key={r.num} value={r.num}>
+                      R{r.num}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {barPath && selectedBarRep !== "all" && (
+                <select
+                  className="bp-rep-select"
+                  value={techniqueMode}
+                  onChange={(e) =>
+                    setTechniqueMode(e.target.value as "ellipse" | "j")
+                  }
+                  aria-label="Reference technique shape"
+                  title="Reference technique shape"
+                >
+                  <option value="ellipse">ellipse</option>
+                  <option value="j">J-curve</option>
+                </select>
+              )}
             </span>
           </div>
           <div className="barpath-viz">
             <div className="barpath-legend">
               <div className="row">
                 <span className="sw" style={{ background: "var(--sig)" }} />
-                <span>best rep</span>
+                <span>{selectedBarRep === "all" ? "best rep" : `R${selectedBarRep}`}</span>
               </div>
-              <div className="row">
-                <span className="sw" style={{ background: "var(--bone)", opacity: 0.5 }} />
-                <span>other reps</span>
-              </div>
+              {selectedBarRep === "all" ? (
+                <div className="row">
+                  <span className="sw" style={{ background: "var(--bone)", opacity: 0.5 }} />
+                  <span>other reps</span>
+                </div>
+              ) : (
+                <div className="row">
+                  <span
+                    className="sw"
+                    style={{
+                      background:
+                        "repeating-linear-gradient(90deg, var(--hot) 0 4px, transparent 4px 7px)",
+                    }}
+                  />
+                  <span>{techniqueMode === "j" ? "reference J-curve" : "reference ellipse"}</span>
+                </div>
+              )}
             </div>
             <svg viewBox="0 0 520 360" preserveAspectRatio="xMidYMid meet">
-              <g stroke="#161b23" strokeWidth="1">
-                <line x1="0" y1="60" x2="520" y2="60" />
-                <line x1="0" y1="120" x2="520" y2="120" />
-                <line x1="0" y1="180" x2="520" y2="180" />
-                <line x1="0" y1="240" x2="520" y2="240" />
-                <line x1="0" y1="300" x2="520" y2="300" />
-                <line x1="80" y1="0" x2="80" y2="360" />
-                <line x1="160" y1="0" x2="160" y2="360" />
-                <line x1="240" y1="0" x2="240" y2="360" />
-                <line x1="320" y1="0" x2="320" y2="360" />
-                <line x1="400" y1="0" x2="400" y2="360" />
-              </g>
-              <line x1="260" y1="0" x2="260" y2="360" stroke="#2a323f" strokeDasharray="1 6" />
-              {/* real per-rep bar paths. Axes:
-                    svg_y = 120 − z_cm · 3   (z=0 at top, z=−40 mid)
-                    svg_x = 260 + x_cm · 8   (x=0 centered)                  */}
-              {barPath && barPath.reps.length > 0 && (() => {
-                const PX_PER_CM_Y = 3
-                const PX_PER_CM_X = 8
-                const ORIG_Y = 120
-                const ORIG_X = 260
+              {barPath && barPath.reps.length > 0 ? (() => {
+                const visible =
+                  selectedBarRep === "all"
+                    ? barPath.reps
+                    : barPath.reps.filter((r) => r.num === selectedBarRep)
+                if (visible.length === 0) return null
+
+                // Reference technique shape — single rep only.
+                // "ellipse" sweeps tau ∈ [0, 2π] for a closed loop:
+                // eccentric leg forward of the diagonal, concentric
+                // leg behind it. "j" sweeps tau ∈ [0, π] for the
+                // descent half only — the iconic open J. Forward
+                // direction follows the sign of the rep's own chest x
+                // (typically -X per the IMU convention).
+                let optimal: { x: number[]; z: number[] } | null = null
+                if (selectedBarRep !== "all" && visible.length === 1) {
+                  const repSel = visible[0]
+                  const ROM_M = Math.max(repSel.rom_m, 0.05)
+                  const chestX = repSel.x_m[repSel.chest_idx] ?? 0
+                  const xSign = chestX < 0 ? -1 : 1
+                  const XMAX_M = xSign * 0.12 * ROM_M
+                  const M_MAG = Math.hypot(XMAX_M, ROM_M)
+                  const THICK = 0.18 * M_MAG
+                  const N_OPT = 80
+                  const tauMax = techniqueMode === "j" ? Math.PI : 2 * Math.PI
+                  const xs: number[] = []
+                  const zs: number[] = []
+                  for (let k = 0; k < N_OPT; k++) {
+                    const tau = (k / (N_OPT - 1)) * tauMax
+                    const along = (1 - Math.cos(tau)) / 2
+                    const perp = Math.sin(tau) / 2
+                    xs.push(along * XMAX_M + perp * THICK * (ROM_M / M_MAG) * xSign)
+                    zs.push(-along * ROM_M + perp * THICK * (Math.abs(XMAX_M) / M_MAG))
+                  }
+                  optimal = { x: xs, z: zs }
+                }
+
+                // bounds in metres across visible reps + optimal, padded 8%
+                let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity
+                for (const r of visible) {
+                  for (const v of r.x_m) { if (v < xMin) xMin = v; if (v > xMax) xMax = v }
+                  for (const v of r.z_m) { if (v < zMin) zMin = v; if (v > zMax) zMax = v }
+                }
+                if (optimal) {
+                  for (const v of optimal.x) { if (v < xMin) xMin = v; if (v > xMax) xMax = v }
+                  for (const v of optimal.z) { if (v < zMin) zMin = v; if (v > zMax) zMax = v }
+                }
+                const xRangeRaw = xMax - xMin || 0.02
+                const zRangeRaw = zMax - zMin || 0.02
+                const xPad = xRangeRaw * 0.08
+                const zPad = zRangeRaw * 0.08
+                xMin -= xPad; xMax += xPad
+                zMin -= zPad; zMax += zPad
+
+                const PAD_L = 44, PAD_R = 14, PAD_T = 16, PAD_B = 32
+                const VW = 520, VH = 360
+                const plotW = VW - PAD_L - PAD_R
+                const plotH = VH - PAD_T - PAD_B
+                const projX = (xm: number) =>
+                  PAD_L + ((xm - xMin) / (xMax - xMin)) * plotW
+                const projY = (zm: number) =>
+                  PAD_T + ((zMax - zm) / (zMax - zMin)) * plotH
                 const toPath = (xs: number[], zs: number[]) =>
                   xs
-                    .map((xm, i) => {
-                      const X = ORIG_X + xm * 100 * PX_PER_CM_X
-                      const Y = ORIG_Y - zs[i] * 100 * PX_PER_CM_Y
-                      return `${i === 0 ? "M" : "L"} ${X.toFixed(1)},${Y.toFixed(1)}`
-                    })
+                    .map((xm, i) => `${i === 0 ? "M" : "L"} ${projX(xm).toFixed(1)},${projY(zs[i]).toFixed(1)}`)
                     .join(" ")
-                const bestBp = bestNum
-                  ? barPath.reps.find((r) => r.num === bestNum) ?? null
+
+                // Arrow-head triangle at sample i, oriented along the
+                // local path tangent (i → i+span). Returns the SVG
+                // `points` attribute string.
+                const arrowAt = (xs: number[], zs: number[], i: number, size = 7) => {
+                  const span = Math.min(2, xs.length - 1 - i)
+                  if (span <= 0 || i < 0) return ""
+                  const x1 = projX(xs[i]), y1 = projY(zs[i])
+                  const x2 = projX(xs[i + span]), y2 = projY(zs[i + span])
+                  const dx = x2 - x1, dy = y2 - y1
+                  const len = Math.hypot(dx, dy) || 1
+                  const ux = dx / len, uy = dy / len
+                  const tipX = x1 + ux * size * 0.7
+                  const tipY = y1 + uy * size * 0.7
+                  const halfBase = size * 0.55
+                  const bX = x1 - ux * size * 0.5
+                  const bY = y1 - uy * size * 0.5
+                  const blX = bX - uy * halfBase, blY = bY + ux * halfBase
+                  const brX = bX + uy * halfBase, brY = bY - ux * halfBase
+                  return `${tipX.toFixed(1)},${tipY.toFixed(1)} ${blX.toFixed(1)},${blY.toFixed(1)} ${brX.toFixed(1)},${brY.toFixed(1)}`
+                }
+
+                // nice tick step: 1, 2, 5 × 10^k (in cm)
+                const niceStepCm = (rangeCm: number, target = 5) => {
+                  const rough = rangeCm / target
+                  const exp = Math.floor(Math.log10(Math.max(rough, 1e-6)))
+                  const f = rough / Math.pow(10, exp)
+                  const nf = f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10
+                  return nf * Math.pow(10, exp)
+                }
+                const xTickCm = niceStepCm((xMax - xMin) * 100)
+                const zTickCm = niceStepCm((zMax - zMin) * 100)
+                const xTicks: number[] = []
+                for (
+                  let v = Math.ceil((xMin * 100) / xTickCm) * xTickCm;
+                  v <= xMax * 100 + 1e-6;
+                  v += xTickCm
+                ) xTicks.push(v)
+                const zTicks: number[] = []
+                for (
+                  let v = Math.ceil((zMin * 100) / zTickCm) * zTickCm;
+                  v <= zMax * 100 + 1e-6;
+                  v += zTickCm
+                ) zTicks.push(v)
+
+                const fmtTick = (cm: number) =>
+                  Math.abs(cm) < 0.05 ? "0" : (Number.isInteger(xTickCm) && Number.isInteger(zTickCm) ? cm.toFixed(0) : cm.toFixed(1))
+
+                const sel =
+                  selectedBarRep === "all"
+                    ? bestNum
+                      ? visible.find((r) => r.num === bestNum) ?? visible[0]
+                      : visible[0]
+                    : visible[0]
+
+                const selArrows = sel
+                  ? {
+                      ecc: Math.max(0, Math.floor(sel.chest_idx / 2)),
+                      conc: Math.floor((sel.chest_idx + sel.lockout_idx) / 2),
+                    }
                   : null
+
                 return (
                   <>
-                    <g fill="none" stroke="var(--bone)" strokeWidth={1.3} opacity={0.45}>
-                      {barPath.reps
-                        .filter((r) => !bestBp || r.num !== bestBp.num)
-                        .slice(0, 8)
-                        .map((r) => (
-                          <path key={`bp-${r.num}`} d={toPath(r.x_m, r.z_m)} />
-                        ))}
+                    <g stroke="#161b23" strokeWidth="1">
+                      {xTicks.map((cm) => (
+                        <line key={`xg-${cm}`} x1={projX(cm / 100)} y1={PAD_T} x2={projX(cm / 100)} y2={PAD_T + plotH} />
+                      ))}
+                      {zTicks.map((cm) => (
+                        <line key={`zg-${cm}`} x1={PAD_L} y1={projY(cm / 100)} x2={PAD_L + plotW} y2={projY(cm / 100)} />
+                      ))}
                     </g>
-                    {bestBp && (
-                      <g fill="none" stroke="var(--sig)" strokeWidth={2.4}>
-                        <path d={toPath(bestBp.x_m, bestBp.z_m)} />
-                        <circle
-                          cx={ORIG_X + bestBp.x_m[0] * 100 * PX_PER_CM_X}
-                          cy={ORIG_Y - bestBp.z_m[0] * 100 * PX_PER_CM_Y}
-                          r={3}
-                          fill="var(--sig)"
+                    {xMin < 0 && xMax > 0 && (
+                      <line x1={projX(0)} y1={PAD_T} x2={projX(0)} y2={PAD_T + plotH} stroke="#2a323f" strokeDasharray="1 6" />
+                    )}
+                    {optimal && (
+                      <>
+                        <path
+                          d={toPath(optimal.x, optimal.z)}
+                          fill="none"
+                          stroke="var(--hot)"
+                          strokeWidth={1.6}
+                          strokeDasharray="4 3"
+                          opacity={0.9}
                         />
+                        <g fill="var(--hot)" opacity={0.95}>
+                          {techniqueMode === "j" ? (
+                            <polygon
+                              points={arrowAt(optimal.x, optimal.z, Math.floor(optimal.x.length * 0.5), 7)}
+                            />
+                          ) : (
+                            <>
+                              <polygon
+                                points={arrowAt(optimal.x, optimal.z, Math.floor(optimal.x.length * 0.25), 7)}
+                              />
+                              <polygon
+                                points={arrowAt(optimal.x, optimal.z, Math.floor(optimal.x.length * 0.75), 7)}
+                              />
+                            </>
+                          )}
+                        </g>
+                      </>
+                    )}
+                    {selectedBarRep === "all" && (
+                      <g fill="none" stroke="var(--bone)" strokeWidth={1.3} opacity={0.45}>
+                        {visible
+                          .filter((r) => !sel || r.num !== sel.num)
+                          .map((r) => (
+                            <path key={`bp-${r.num}`} d={toPath(r.x_m, r.z_m)} />
+                          ))}
+                      </g>
+                    )}
+                    {sel && (
+                      <g fill="none" stroke="var(--sig)" strokeWidth={2.4}>
+                        <path d={toPath(sel.x_m, sel.z_m)} />
+                        <circle cx={projX(sel.x_m[0])} cy={projY(sel.z_m[0])} r={3} fill="var(--sig)" />
                         <circle
-                          cx={
-                            ORIG_X +
-                            bestBp.x_m[bestBp.chest_idx] * 100 * PX_PER_CM_X
-                          }
-                          cy={
-                            ORIG_Y -
-                            bestBp.z_m[bestBp.chest_idx] * 100 * PX_PER_CM_Y
-                          }
+                          cx={projX(sel.x_m[sel.chest_idx])}
+                          cy={projY(sel.z_m[sel.chest_idx])}
                           r={3}
                           fill="var(--sig)"
                         />
                       </g>
                     )}
+                    {sel && selArrows && (
+                      <g fill="var(--sig)">
+                        <polygon points={arrowAt(sel.x_m, sel.z_m, selArrows.ecc, 8)} />
+                        <polygon points={arrowAt(sel.x_m, sel.z_m, selArrows.conc, 8)} />
+                      </g>
+                    )}
+                    <g fontFamily="JetBrains Mono, monospace" fontSize="10" fill="#5a6678" letterSpacing="1.4">
+                      <text x="10" y="14">Z (cm)</text>
+                      <text x={VW - 50} y={VH - 6}>X (cm)</text>
+                      {zTicks.map((cm) => (
+                        <text key={`zt-${cm}`} x={PAD_L - 6} y={projY(cm / 100) + 3} textAnchor="end">
+                          {fmtTick(cm)}
+                        </text>
+                      ))}
+                      {xTicks.map((cm) => (
+                        <text key={`xt-${cm}`} x={projX(cm / 100)} y={PAD_T + plotH + 14} textAnchor="middle">
+                          {fmtTick(cm)}
+                        </text>
+                      ))}
+                    </g>
                   </>
                 )
-              })()}
+              })() : null}
               {!barPath && (
                 <text
                   x={260}
@@ -538,53 +734,48 @@ export default function AnalysisTab({
                   bar-path reconstruction unavailable
                 </text>
               )}
-              <g fontFamily="JetBrains Mono, monospace" fontSize="10" fill="#5a6678" letterSpacing="1.4">
-                <text x="10" y="14">Y (cm)</text>
-                <text x="10" y="64">+20</text>
-                <text x="10" y="124">&nbsp; 0</text>
-                <text x="10" y="184">-20</text>
-                <text x="10" y="244">-40</text>
-                <text x="10" y="304">-60</text>
-                <text x="470" y="344">X (cm)</text>
-                <text x="256" y="344" fill="#8892a4">0</text>
-              </g>
             </svg>
           </div>
           <div className="barpath-foot">
-            <div>
-              <div className="k">ROM</div>
-              <div className="v">
-                {(() => {
-                  const bestBp = barPath && bestNum
-                    ? barPath.reps.find((r) => r.num === bestNum)
-                    : null
-                  const rom_m = bestBp?.rom_m ?? bestRep?.rom_m ?? null
-                  return rom_m != null ? (rom_m * 100).toFixed(1) : "—"
-                })()}{" "}
-                cm
-              </div>
-            </div>
-            <div>
-              <div className="k">Forward drift</div>
-              <div className="v">
-                {(() => {
-                  const bestBp = barPath && bestNum
-                    ? barPath.reps.find((r) => r.num === bestNum)
-                    : null
-                  return bestBp?.peak_x_dev_m != null
-                    ? `${(bestBp.peak_x_dev_m * 100).toFixed(1)} cm`
-                    : "—"
-                })()}
-              </div>
-            </div>
-            <div>
-              <div className="k">Propulsive frac.</div>
-              <div className="v">
-                {bestRep?.propulsive_frac != null
-                  ? `${(bestRep.propulsive_frac * 100).toFixed(0)}%`
-                  : "—"}
-              </div>
-            </div>
+            {(() => {
+              const footRep =
+                barPath && selectedBarRep !== "all"
+                  ? barPath.reps.find((r) => r.num === selectedBarRep) ?? null
+                  : barPath && bestNum
+                  ? barPath.reps.find((r) => r.num === bestNum) ?? null
+                  : null
+              const propulsiveSrc =
+                selectedBarRep !== "all"
+                  ? reps.find((r) => r.num === selectedBarRep) ?? null
+                  : bestRep
+              const rom_m = footRep?.rom_m ?? propulsiveSrc?.rom_m ?? null
+              return (
+                <>
+                  <div>
+                    <div className="k">ROM</div>
+                    <div className="v">
+                      {rom_m != null ? (rom_m * 100).toFixed(1) : "—"} cm
+                    </div>
+                  </div>
+                  <div>
+                    <div className="k">Forward drift</div>
+                    <div className="v">
+                      {footRep?.peak_x_dev_m != null
+                        ? `${(footRep.peak_x_dev_m * 100).toFixed(1)} cm`
+                        : "—"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="k">Propulsive frac.</div>
+                    <div className="v">
+                      {propulsiveSrc?.propulsive_frac != null
+                        ? `${(propulsiveSrc.propulsive_frac * 100).toFixed(0)}%`
+                        : "—"}
+                    </div>
+                  </div>
+                </>
+              )
+            })()}
           </div>
         </div>
       </div>

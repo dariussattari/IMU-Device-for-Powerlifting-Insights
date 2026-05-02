@@ -11,11 +11,14 @@ Design notes
 * A single barbell IMU cannot give stable *absolute* position over long
   durations — double integration turns accel bias into quadratic drift.
   The mitigation (standard in sports-IMU literature) is to bound the
-  problem to the length of a single rep: the bar is stationary at both
-  ends of each rep, so any integration drift shows up as a linear ramp
-  between the two rest endpoints. We subtract that ramp per rep, per
-  axis. This is the main trick that makes single-IMU bar path usable
-  for coaching feedback.
+  problem to the length of a single rep and use the rep boundaries as
+  anchors. The bar is stationary (v=0) at both ends of each rep, so
+  velocity drift after integration is a linear ramp we subtract.
+  We integrate over the *full* lockout→chest→lockout window in one
+  pass: both endpoints are at the same stationary lockout pose, so
+  X, Y, AND Z all legitimately return to their starting value, and we
+  endpoint-anchor every axis. ROM lives in the middle of the window
+  (at chest), not at an endpoint, so anchoring doesn't erase the lift.
 
 * The world frame is Z = up, X = bar's initial forward/back direction,
   Y = bar's initial lateral direction. Yaw is not observable without a
@@ -213,10 +216,31 @@ def _integrate_subwindow(
     accel_world: np.ndarray,
     start: int,
     end: int,
+    anchor_pos_axes: Tuple[bool, bool, bool] = (True, True, True),
 ) -> np.ndarray:
     """Twice-integrate ``accel_world[start:end+1]`` with linear endpoint
-    anchoring on velocity *and* position. Returns (M, 3) position array
-    of length (end - start + 1), zeroed at start and end on every axis.
+    anchoring on velocity (always) and position (per-axis).
+
+    Velocity is always endpoint-anchored. Both endpoints of every
+    sub-window we pass in are vy zero-crossings (rep boundaries), so
+    v=0 holds physically and any nonzero v after integration is
+    accelerometer bias drift — subtracting the line that joins
+    v[0] → v[end] removes it.
+
+    Position is endpoint-anchored only on the axes given by
+    ``anchor_pos_axes``.
+
+    Use ``(True, True, True)`` when both endpoints are at the same
+    stationary pose (e.g., the full lockout→chest→lockout window): the
+    bar genuinely returns to its starting position on every axis, so
+    anchoring removes the linear drift component everywhere. The lift's
+    ROM still shows up: chest depth is in the *middle* of the window,
+    not at an endpoint.
+
+    Use ``(True, True, False)`` when only the *concentric* sub-window
+    is being integrated (chest→lockout): the bar moves by ROM between
+    those endpoints, and anchoring Z would erase the lift. X and Y are
+    safe to anchor (lateral and forward drift return close to zero).
     """
     if end <= start:
         return np.zeros((0, 3))
@@ -236,7 +260,9 @@ def _integrate_subwindow(
             [0.0],
             np.cumsum(0.5 * (vel[1:] + vel[:-1]) * dtvec),
         ))
-        pos[:, ax] = _detrend_endpoints(p)
+        if anchor_pos_axes[ax]:
+            p = _detrend_endpoints(p)
+        pos[:, ax] = p
 
     return pos
 
@@ -375,20 +401,22 @@ def reconstruct_session(
         )
 
     # ── Per-rep reconstruction ───────────────────────────────────────
-    # We reconstruct each rep's path in two short sub-windows, each
-    # anchored at v=0 at both endpoints:
+    # We reconstruct each rep's path over the FULL lockout→chest→lockout
+    # window in a single double-integration with endpoint anchoring on
+    # every axis:
     #
-    #     ECCENTRIC  : [ecc_start (vy zero-crossing) → chest]
-    #     CONCENTRIC : [chest → lockout]
+    #     [ecc_start (vy zero-crossing before descent) → lockout]
     #
-    # The concentric window is always clean — both endpoints come from
-    # the rep detector and are zero-crossings of vy. The eccentric
-    # window can be harder to find cleanly (HP-filtered vy sometimes
-    # oscillates in the lockout hold), so we only include it if a
-    # plausible zero-crossing was found. For reps where eccentric is
-    # unavailable we fall back to a *mirrored* concentric, which is a
-    # common simplification in commercial VBT devices (they assume
-    # eccentric and concentric trace approximately the same path).
+    # Both endpoints are at the same stationary lockout pose, so v=0
+    # AND p=0 on every axis at both ends — anchoring removes the linear
+    # drift component everywhere, including Z. ROM lives in the *middle*
+    # of the window (at chest), so this anchoring doesn't erase it.
+    #
+    # If the eccentric leg can't be cleanly identified (no plausible vy
+    # zero-crossing in the right window), we fall back to a *mirrored*
+    # concentric for the descent half — a common simplification in
+    # commercial VBT devices (they assume eccentric and concentric
+    # trace approximately the same path).
     n_samples = len(t)
     reps_out: List[RepBarPath] = []
     for i, rep in enumerate(rep_candidates):
@@ -412,58 +440,54 @@ def reconstruct_session(
         # Concentric is mandatory — it has the cleanest v=0 anchors.
         if (conc_e - conc_s) < int(0.2 * fs):
             continue
-        pos_conc = _integrate_subwindow(t, accel_world, conc_s, conc_e)
-        if len(pos_conc) == 0:
-            continue
 
-        # Eccentric is optional. Only accept it when all of these hold:
-        #   • the window duration is plausible (0.25 – 1.2 s)
-        #   • integrated concentric and eccentric ROMs agree within
-        #     roughly a factor of 2 (eccentric and concentric trace
-        #     the same physical distance; a big mismatch means we
-        #     latched onto a stale zero-crossing or accumulated drift
-        #     across a too-long window)
-        # Failing these, we fall back to concentric-mirrored which
-        # produces a consistent ROM across reps.
+        # Try the full lockout→chest→lockout integration first. Accept
+        # it if the eccentric duration is plausible AND the resulting
+        # path has chest as its deepest point (sanity that integration
+        # didn't drift past the chest depth somewhere else).
         ecc_dur_s = (ecc_e - ecc_s) / fs
         have_ecc = False
-        pos_ecc = np.zeros((0, 3))
-        if 0.25 <= ecc_dur_s <= 1.2:
-            pos_ecc_try = _integrate_subwindow(t, accel_world, ecc_s, ecc_e)
-            if len(pos_ecc_try) > 0:
-                conc_rom = float(np.ptp(pos_conc[:, 2]))
-                ecc_rom = float(np.ptp(pos_ecc_try[:, 2]))
-                if (conc_rom > 1e-3
-                        and 0.5 * conc_rom <= ecc_rom <= 2.0 * conc_rom):
-                    pos_ecc = pos_ecc_try
+        pos_full = np.zeros((0, 3))
+        if 0.25 <= ecc_dur_s <= 1.5:
+            pos_try = _integrate_subwindow(
+                t, accel_world, ecc_s, conc_e,
+                anchor_pos_axes=(True, True, True),
+            )
+            if len(pos_try) > 0:
+                chest_local = chest_idx_abs - ecc_s
+                z_try = pos_try[:, 2]
+                if (
+                    0 <= chest_local < len(z_try)
+                    and z_try[chest_local] < 0
+                    and z_try[chest_local] <= z_try.min() + 0.03
+                ):
+                    pos_full = pos_try
                     have_ecc = True
 
         if have_ecc:
-            # Stitch ecc (ends at 0,0,0 = chest) → conc (starts at 0).
-            # Drop the duplicate chest sample between them.
-            pos_full = np.vstack([pos_ecc[:-1], pos_conc])
-            t_full = np.concatenate([
-                t[ecc_s:ecc_e + 1][:-1] - t[ecc_s],
-                t[conc_s:conc_e + 1] - t[ecc_s],
-            ])
-            # Translate so the window starts at (0,0,0) — i.e. the
-            # graph shows "bar starts at previous lockout, dips to
-            # chest, returns to lockout".
-            pos_full = pos_full - pos_full[0]
-            chest_in_full = len(pos_ecc) - 1
+            t_full = t[ecc_s:conc_e + 1] - t[ecc_s]
+            chest_in_full = chest_idx_abs - ecc_s
             lockout_in_full = len(pos_full) - 1
             start_s_abs = float(t[ecc_s])
         else:
-            # Concentric-only fallback. Mirror the concentric for the
-            # eccentric half so the plotted path is still a visible
-            # loop. The mirror is temporally symmetric (reversed) and
-            # spatially identical — a known simplification.
+            # Concentric-only fallback. Anchor X/Y but not Z (chest and
+            # lockout are at different vertical heights), then mirror
+            # the concentric for the eccentric half so the plotted path
+            # is still a visible J-curve.
+            pos_conc = _integrate_subwindow(
+                t, accel_world, conc_s, conc_e,
+                anchor_pos_axes=(True, True, False),
+            )
+            if len(pos_conc) == 0:
+                continue
             conc_t = t[conc_s:conc_e + 1] - t[conc_s]
             mirror_pos = pos_conc[::-1].copy()
             mirror_t = conc_t[-1] - conc_t[::-1]
             pos_full = np.vstack([mirror_pos[:-1], pos_conc])
             t_full = np.concatenate([mirror_t[:-1], conc_t + conc_t[-1]])
-            # Translate so start is at (0,0,0)
+            # Translate so start is at (0,0,0). Mirror starts at
+            # lockout (z = +Δz_conc) and pos_conc ends at lockout, so
+            # after the shift: start ≈ 0, chest ≈ −Δz_conc, end ≈ 0.
             pos_full = pos_full - pos_full[0]
             chest_in_full = len(mirror_pos) - 1
             lockout_in_full = len(pos_full) - 1
@@ -511,7 +535,10 @@ def reconstruct_session(
         n_reps=len(reps_out),
         reps=reps_out,
         notes=(
-            "calibration-only orientation + per-phase (ecc/conc) "
-            "endpoint-anchored double integration"
+            "calibration-only orientation + single full-rep "
+            "(lockout→chest→lockout) double integration; velocity AND "
+            "position endpoint-anchored on all 3 axes (legitimate — "
+            "both endpoints at the same lockout pose). Real ROM is "
+            "preserved at the chest mid-window."
         ),
     )

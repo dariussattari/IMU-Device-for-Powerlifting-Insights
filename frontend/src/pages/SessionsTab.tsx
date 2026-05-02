@@ -187,6 +187,13 @@ export default function SessionsTab({
     setPending((p) => p.map((r) => (r.id === id ? { ...r, ...patch } : r)))
   }
 
+  // Lifter is a session-level field — typing it on any pending row
+  // applies to every set in this batch. Load and target-reps remain
+  // per-row because sets at different loads share the lifter.
+  function setBatchLifter(lifter: string) {
+    setPending((p) => p.map((r) => ({ ...r, lifter })))
+  }
+
   function removePending(id: string) {
     setPending((p) => p.filter((r) => r.id !== id))
   }
@@ -405,10 +412,15 @@ export default function SessionsTab({
                   </div>
                   <div className="grid">
                     <div className="field">
-                      <label>Lifter</label>
+                      <label>
+                        Lifter{" "}
+                        <span style={{ color: "var(--ink-600)" }}>
+                          (applies to all sets)
+                        </span>
+                      </label>
                       <input
                         value={row.lifter}
-                        onChange={(e) => updatePending(row.id, { lifter: e.target.value })}
+                        onChange={(e) => setBatchLifter(e.target.value)}
                         placeholder="D"
                       />
                     </div>

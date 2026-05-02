@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "frontend", "--", "--strictPort"],
       "port": 5173
+    },
+    {
+      "name": "api-dev",
+      "runtimeExecutable": "uvicorn",
+      "runtimeArgs": ["src.api.app:app", "--reload", "--port", "8000"],
+      "port": 8000
     }
   ]
 }
