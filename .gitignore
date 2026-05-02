@@ -2,6 +2,12 @@
 *.html
 !frontend/**/*.html
 *.csv
+# Re-include committed reference recordings used by validation harnesses
+# and the sample dataset that ships with the repo for quick CLI demos.
+!data_collection/sample/*.csv
+!data_collection/session_*.csv
+!data_collection/D_*_session_*.csv
+!data_collection/M_*_session_*.csv
 *.png
 !frontend/public/*.png
 *.docx
